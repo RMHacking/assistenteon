@@ -141,6 +141,43 @@ tailwind.config = {
   @media(min-width:1024px){ body.menu-collapsed #appHeader{padding-left:60px} }
   .cal-day:hover{background:#262a37}
 </style>
+
+<!-- ============ FIREBASE (SDK compat — carregado, mas ainda NÃO ativo) ============ -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* Inicialização do Firebase do projeto AssistenteOn.
+   Nesta etapa (bloco 1) o Firebase é apenas CONECTADO — o sistema continua
+   usando o modo local para login e dados. Nos próximos blocos, ativaremos
+   Auth e Firestore de verdade. Se algo falhar aqui, o try/catch impede que
+   o sistema quebre. */
+window.FB = null;
+try {
+  const firebaseConfig = {
+    apiKey: "AIzaSyA7gNU_PWrjWqRV07Olw76fyPrsa0XZ4rM",
+    authDomain: "assistenteon.firebaseapp.com",
+    projectId: "assistenteon",
+    storageBucket: "assistenteon.firebasestorage.app",
+    messagingSenderId: "828028877592",
+    appId: "1:828028877592:web:fe69e94c4094d9aef97c6d"
+  };
+  if (window.firebase && firebase.initializeApp) {
+    firebase.initializeApp(firebaseConfig);
+    window.FB = {
+      auth: firebase.auth ? firebase.auth() : null,
+      db: firebase.firestore ? firebase.firestore() : null,
+      ready: true
+    };
+    console.log('[AssistenteOn] Firebase conectado ✓');
+  } else {
+    console.warn('[AssistenteOn] SDK do Firebase não carregou (sem internet?). Sistema segue no modo local.');
+  }
+} catch (e) {
+  console.warn('[AssistenteOn] Firebase não inicializou:', e.message, '— sistema segue no modo local.');
+  window.FB = null;
+}
+</script>
 </head>
 <body class="min-h-screen">
 
@@ -158,11 +195,8 @@ tailwind.config = {
         <input id="login_pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')fazerLogin()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2.5 text-sm" placeholder="••••••"></label>
       <div id="login_erro" class="hidden text-red-400 text-xs mb-3"></div>
       <button onclick="fazerLogin()" class="w-full py-2.5 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">Entrar</button>
-      <div class="mt-4 pt-4 border-t border-edge text-[11px] text-muted">
-        Quer conhecer o sistema? <button onclick="preencherLogin('teste')" class="text-accent hover:underline font-medium">Entrar na conta de demonstração</button>
-      </div>
     </div>
-    <p class="text-center text-[11px] text-muted mt-4">Acesso local a este dispositivo. Não protege dados sensíveis por criptografia.</p>
+    <p class="text-center text-[11px] text-muted mt-4">Acesso restrito. Fale com o administrador para obter seu acesso.</p>
   </div>
 </div>
 
