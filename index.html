@@ -3995,20 +3995,27 @@ RENDER.admin = () => {
   const ativos=lista.filter(c=>c.validade && c.validade>=hoje).length;
   const vencidos=lista.filter(c=>c.validade && c.validade<hoje).length;
   const stat=(lbl,val,cls)=>`<div class="bg-panel border border-edge rounded-xl p-4"><div class="text-[10px] uppercase tracking-wider text-muted/70 font-medium">${lbl}</div><div class="stat-hero text-3xl mt-1.5 ${cls||''}">${val}</div></div>`;
+  const temFB = !!(window.FB && window.FB.auth);
   v.innerHTML=`
   <div class="fade space-y-6">
     <div class="bg-accent/10 border border-accent/30 rounded-xl p-4 text-sm">
       <div class="font-medium text-accent mb-1">★ Painel do administrador</div>
-      <p class="text-muted text-xs">Cadastro dos clientes que compraram seu sistema. Hoje o registro é manual. Quando você migrar para o Firebase, esta lista passa a ser preenchida automaticamente a cada novo comprador (ver guia de migração).</p>
+      <p class="text-muted text-xs">Gere acessos (e-mail e senha) para clientes ou testes gratuitos, e ative/desative quando quiser.</p>
     </div>
 
-    <div class="grid grid-cols-3 gap-3">
-      ${stat('Compradores', lista.length)}
-      ${stat('Ativos', ativos, 'text-green-400')}
-      ${stat('Vencidos', vencidos, vencidos?'text-red-400':'')}
+    ${temFB ? `
+    ${panel('adm_acessos','Acessos ao sistema (nuvem)', `
+      <div id="adm_acessos_lista" class="space-y-1.5">
+        <div class="text-center text-muted text-sm py-4">Carregando acessos...</div>
+      </div>
+    `, `<button onclick="acessoForm()" class="px-3 py-1.5 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">+ Gerar acesso</button>`)}
+    ` : `
+    <div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-sm text-amber-300">
+      A gestão de acessos na nuvem precisa do Firebase conectado. No momento o sistema está em modo local.
     </div>
+    `}
 
-    ${panel('adm_lista','Clientes que compraram', `
+    ${panel('adm_lista','Anotações de compradores (manual)', `
       <div class="space-y-1.5">
         ${lista.length? lista.map(c=>{
           const st=compradorStatus(c);
@@ -4022,11 +4029,74 @@ RENDER.admin = () => {
             <button onclick="compForm('${c.id}')" class="text-muted text-xs">✎</button>
             <button onclick="delComp('${c.id}')" class="text-red-400 text-xs">✕</button>
           </div>`;
-        }).join('') : emptyState('Nenhum comprador cadastrado ainda.')}
+        }).join('') : emptyState('Nenhuma anotação de comprador.')}
       </div>
-    `, `<button onclick="compForm()" class="px-3 py-1.5 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">+ Comprador</button>`)}
+    `, `<button onclick="compForm()" class="px-3 py-1.5 rounded-lg bg-ink border border-edge hover:border-accent text-sm">+ Anotação</button>`)}
   </div>`;
+  if(temFB) carregarAcessosPainel();
 };
+
+// carrega e renderiza a lista de acessos do Firebase
+async function carregarAcessosPainel(){
+  const box=document.getElementById('adm_acessos_lista');
+  if(!box) return;
+  const acessos = await adminListarAcessos();
+  if(acessos===null){
+    box.innerHTML=`<div class="text-amber-300 text-xs py-2">Não foi possível listar os acessos. Verifique as regras de segurança do Firestore (o admin precisa de permissão para ler a coleção "users").</div>`;
+    return;
+  }
+  if(!acessos.length){ box.innerHTML=emptyState('Nenhum acesso gerado ainda.'); return; }
+  // ordena: admins primeiro, depois por nome
+  acessos.sort((a,b)=> (a.role==='admin'?-1:0)-(b.role==='admin'?-1:0) || (a.nome||'').localeCompare(b.nome||''));
+  box.innerHTML = acessos.map(u=>{
+    const ativo = u.ativo!==false;
+    const ehAdm = (u.role==='admin');
+    const stCls = ativo? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400';
+    const stTxt = ativo? 'Ativo' : 'Inativo';
+    return `<div class="flex items-center gap-3 bg-ink border border-edge rounded-lg px-3 py-2.5 text-sm">
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">${esc(u.nome||u.email||'(sem nome)')} ${ehAdm?'<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 ml-1">admin</span>':''}</div>
+        <div class="text-xs text-muted truncate">${esc(u.email||u.uid)}</div>
+      </div>
+      <span class="px-2 py-0.5 rounded-full text-[10px] font-medium ${stCls}">${stTxt}</span>
+      ${ehAdm? '' : `<button onclick="toggleAcesso('${u.uid}', ${ativo})" class="px-2 py-1 rounded ${ativo?'bg-red-600/20 text-red-400 hover:bg-red-600/30':'bg-green-600/20 text-green-400 hover:bg-green-600/30'} text-xs">${ativo?'Desativar':'Ativar'}</button>`}
+    </div>`;
+  }).join('');
+}
+
+function acessoForm(){
+  openModal('Gerar novo acesso', `
+    <div class="text-xs text-muted mb-1">Crie um acesso com e-mail e senha para enviar a um cliente ou para um teste gratuito.</div>
+    ${field('Nome do cliente','ac_nome','')}
+    ${field('E-mail','ac_email','','email')}
+    ${field('Senha inicial (mín. 6 caracteres)','ac_senha','')}
+    <div class="text-[11px] text-muted mt-2 mb-3">A pessoa poderá trocar a senha depois. Anote e envie o e-mail e a senha para ela.</div>
+    ${btnRow('Criar acesso','saveAcesso()')}
+  `);
+}
+
+async function saveAcesso(){
+  const nome=val('ac_nome'), email=(val('ac_email')||'').trim(), senha=val('ac_senha');
+  if(!email){ toast('Informe o e-mail.'); return; }
+  if(!senha || senha.length<6){ toast('A senha precisa de ao menos 6 caracteres.'); return; }
+  toast('Criando acesso...');
+  const res = await adminCriarAcesso(email, senha, nome, 'cliente');
+  if(res.ok){
+    closeModal();
+    toast('Acesso criado! Envie o e-mail e a senha para o cliente.');
+    carregarAcessosPainel();
+  }else{
+    toast(res.erro||'Erro ao criar acesso.');
+  }
+}
+
+async function toggleAcesso(uid, ativoAtual){
+  const novoAtivo = !ativoAtual;
+  if(!confirm(novoAtivo? 'Reativar este acesso?' : 'Desativar este acesso? A pessoa não conseguirá mais entrar.')) return;
+  const ok = await adminSetAtivo(uid, novoAtivo);
+  if(ok){ toast(novoAtivo?'Acesso reativado.':'Acesso desativado.'); carregarAcessosPainel(); }
+  else toast('Não foi possível alterar o acesso.');
+}
 function compForm(id){
   const c=id? store.compradores.find(x=>x.id===id) : {dataCompra:todayStr()};
   openModal(id?'Editar comprador':'Novo comprador', `
@@ -4339,6 +4409,71 @@ async function logout(){
 }
 function papelAtual(){ return sessao?.papel || 'cliente'; }
 function ehAdmin(){ return papelAtual()==='admin'; }
+
+/* ==========================================================================
+   ADMIN — gestão de acessos de clientes (Firebase Auth + Firestore)
+   Cria/gerencia usuários sem deslogar o admin (usa app secundário).
+   ========================================================================== */
+let FB_SECONDARY = null;
+function getSecondaryApp(){
+  // cria (uma vez) uma segunda instância do Firebase, só para criar usuários
+  // sem afetar a sessão do admin logado na instância principal.
+  if(!window.firebase || !firebase.initializeApp) return null;
+  if(FB_SECONDARY) return FB_SECONDARY;
+  try{
+    const cfg = firebase.app().options;
+    FB_SECONDARY = firebase.initializeApp(cfg, 'secondary_'+Date.now());
+    return FB_SECONDARY;
+  }catch(e){ console.error('secondary app:', e); return null; }
+}
+
+// cria um acesso (e-mail/senha) + perfil no Firestore. Retorna {ok, uid} ou {ok:false, erro}.
+async function adminCriarAcesso(email, senha, nome, papel){
+  if(!window.FB || !window.FB.auth || !window.FB.db) return {ok:false, erro:'Firebase indisponível.'};
+  const sec = getSecondaryApp();
+  if(!sec) return {ok:false, erro:'Não foi possível preparar a criação.'};
+  try{
+    // cria o usuário na instância secundária (não desloga o admin)
+    const cred = await sec.auth().createUserWithEmailAndPassword(email, senha);
+    const uid = cred.user.uid;
+    // grava o perfil no Firestore (na instância principal, como admin)
+    await window.FB.db.collection('users').doc(uid).set({
+      nome: nome||email.split('@')[0],
+      email: email,
+      role: papel||'cliente',
+      ativo: true,
+      criadoEm: new Date().toISOString(),
+      criadoPor: sessao?.email || 'admin'
+    });
+    // desloga a instância secundária (o admin principal continua logado)
+    await sec.auth().signOut();
+    return {ok:true, uid};
+  }catch(e){
+    let msg='Erro ao criar acesso.';
+    if(e.code==='auth/email-already-in-use') msg='Este e-mail já tem acesso.';
+    else if(e.code==='auth/invalid-email') msg='E-mail inválido.';
+    else if(e.code==='auth/weak-password') msg='A senha precisa de ao menos 6 caracteres.';
+    return {ok:false, erro:msg};
+  }
+}
+
+// lista todos os acessos (lê a coleção users). Requer que as regras permitam ao admin ler.
+async function adminListarAcessos(){
+  if(!window.FB || !window.FB.db) return [];
+  try{
+    const snap = await window.FB.db.collection('users').get();
+    const arr=[];
+    snap.forEach(doc=>{ arr.push({ uid:doc.id, ...doc.data() }); });
+    return arr;
+  }catch(e){ console.error('listar acessos:', e); return null; /* null = sem permissão/erro */ }
+}
+
+// ativa/desativa um acesso (muda o campo 'ativo' no Firestore)
+async function adminSetAtivo(uid, ativo){
+  if(!window.FB || !window.FB.db) return false;
+  try{ await window.FB.db.collection('users').doc(uid).set({ativo}, {merge:true}); return true; }
+  catch(e){ console.error('set ativo:', e); return false; }
+}
 function renderSessaoBadge(){
   const el=document.getElementById('sessaoBadge');
   if(!el || !sessao) return;
