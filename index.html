@@ -191,9 +191,16 @@ try {
     <div class="bg-panel border border-edge rounded-2xl p-6">
       <label class="block mb-3"><span class="text-xs text-muted mb-1 block">E-mail</span>
         <input id="login_user" type="email" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login_pass').focus()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2.5 text-sm" placeholder="seu@email.com"></label>
-      <label class="block mb-4"><span class="text-xs text-muted mb-1 block">Senha</span>
+      <label class="block mb-3"><span class="text-xs text-muted mb-1 block">Senha</span>
         <input id="login_pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')fazerLogin()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2.5 text-sm" placeholder="••••••"></label>
+      <div class="flex items-center justify-between mb-4">
+        <label class="flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
+          <input type="checkbox" id="login_lembrar" class="accent-accent w-3.5 h-3.5"> Lembrar meu e-mail
+        </label>
+        <button type="button" onclick="esqueciSenha()" class="text-xs text-accent hover:underline">Esqueci minha senha</button>
+      </div>
       <div id="login_erro" class="hidden text-red-400 text-xs mb-3"></div>
+      <div id="login_ok" class="hidden text-green-400 text-xs mb-3"></div>
       <button id="login_btn" onclick="fazerLogin()" class="w-full py-2.5 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">Entrar</button>
     </div>
     <p class="text-center text-[11px] text-muted mt-4">Acesso restrito. Fale com o administrador para obter seu acesso.</p>
@@ -204,8 +211,8 @@ try {
 <div id="appRoot" class="flex min-h-screen">
 
   <!-- Sidebar -->
-  <aside id="sidebar" class="fixed lg:static z-40 w-64 shrink-0 bg-ink border-r border-edge min-h-screen flex flex-col -translate-x-full lg:translate-x-0 transition-transform">
-    <div class="px-5 py-5 border-b border-edge">
+  <aside id="sidebar" class="fixed lg:static z-40 w-64 shrink-0 bg-ink border-r border-edge h-screen lg:h-auto lg:min-h-screen flex flex-col -translate-x-full lg:translate-x-0 transition-transform">
+    <div class="px-5 py-5 border-b border-edge shrink-0">
       <div id="brandBox" class="flex items-center gap-3">
         <div class="w-9 h-9 rounded-lg bg-accent grid place-items-center font-display font-bold text-ink">AO</div>
         <div>
@@ -215,8 +222,8 @@ try {
       </div>
       <div id="sessaoBadge" class="mt-2"></div>
     </div>
-    <nav id="nav" class="flex-1 p-3 space-y-1 overflow-y-auto text-sm"></nav>
-    <div class="p-3 border-t border-edge text-[11px] text-muted">
+    <nav id="nav" class="flex-1 min-h-0 p-3 space-y-1 overflow-y-auto text-sm"></nav>
+    <div class="p-3 border-t border-edge text-[11px] text-muted shrink-0">
       <button onclick="go('negocio')" class="text-accent hover:underline">⚙ Configurações e backup</button>
       <div class="flex items-center gap-1.5 mt-3 pt-3 border-t border-edge/50 text-muted/60">
         <span class="w-4 h-4 rounded bg-accent/80 grid place-items-center font-display font-bold text-ink text-[9px] leading-none shrink-0">AO</span>
@@ -4321,11 +4328,15 @@ async function autenticarFirebase(email, senha){
         await window.FB.auth.signOut();
         throw new Error('__DESATIVADA__');
       }
+    } else {
+      console.warn('[AssistenteOn] Perfil não encontrado em users/'+uid+' — tratando como cliente.');
     }
   }catch(e){
     if(e.message==='__DESATIVADA__') throw e;
-    // se falhar a leitura do perfil, segue como cliente (não bloqueia o login)
+    // se falhar a leitura do perfil, avisa no console (ajuda a diagnosticar regras)
+    console.error('[AssistenteOn] Erro ao ler perfil do usuário (verifique as regras do Firestore):', e.code||e.message);
   }
+  console.log('[AssistenteOn] Login: papel =', papel, '| nome =', nome);
   return { user:uid, papel, nome, email };
 }
 
@@ -4381,6 +4392,12 @@ async function fazerLogin(){
     // sucesso
     sessao=res;
     localStorage.setItem('eo_sessao', JSON.stringify(sessao));
+    // lembrar e-mail (se marcado)
+    try{
+      const lembrar=document.getElementById('login_lembrar');
+      if(lembrar && lembrar.checked){ localStorage.setItem('eo_email_lembrado', u); }
+      else { localStorage.removeItem('eo_email_lembrado'); }
+    }catch(e){}
     dbSetUser(sessao.user);   // namespace dos dados = uid (ou usuário local)
     if(btn){ btn.textContent='Carregando seus dados...'; }
     await carregarDadosFirebase();   // busca os dados do usuário na nuvem (aguarda)
@@ -4396,6 +4413,35 @@ async function fazerLogin(){
   }
 }
 
+// Redefinir senha: envia e-mail de recuperação via Firebase Auth
+async function esqueciSenha(){
+  const erro=document.getElementById('login_erro');
+  const ok=document.getElementById('login_ok');
+  erro.classList.add('hidden'); ok.classList.add('hidden');
+  const email=(document.getElementById('login_user').value||'').trim();
+  if(!email){
+    erro.textContent='Digite seu e-mail no campo acima e clique em "Esqueci minha senha" de novo.';
+    erro.classList.remove('hidden');
+    return;
+  }
+  if(!window.FB || !window.FB.auth){
+    erro.textContent='A recuperação de senha precisa de conexão. Tente novamente em instantes.';
+    erro.classList.remove('hidden');
+    return;
+  }
+  try{
+    await window.FB.auth.sendPasswordResetEmail(email);
+    ok.textContent='Enviamos um link de redefinição para '+email+'. Verifique sua caixa de entrada (e o spam).';
+    ok.classList.remove('hidden');
+  }catch(e){
+    let msg='Não foi possível enviar o e-mail de redefinição.';
+    if(e.code==='auth/invalid-email') msg='E-mail inválido.';
+    else if(e.code==='auth/user-not-found') msg='Não há conta com esse e-mail.';
+    erro.textContent=msg;
+    erro.classList.remove('hidden');
+  }
+}
+
 async function logout(){
   try{ await flushFirebase(); }catch(e){}   // grava pendências antes de sair
   localStorage.removeItem('eo_sessao'); 
@@ -4406,6 +4452,10 @@ async function logout(){
   document.getElementById('appRoot').style.display='none';
   const ls=document.getElementById('loginScreen'); ls.classList.remove('hidden'); ls.classList.add('flex');
   document.getElementById('login_user').value=''; document.getElementById('login_pass').value='';
+  // limpa mensagens e repõe o e-mail lembrado
+  document.getElementById('login_erro')?.classList.add('hidden');
+  document.getElementById('login_ok')?.classList.add('hidden');
+  if(typeof preencherEmailLembrado==='function') preencherEmailLembrado();
 }
 function papelAtual(){ return sessao?.papel || 'cliente'; }
 function ehAdmin(){ return papelAtual()==='admin'; }
@@ -4545,6 +4595,19 @@ function alertaAoAbrir(){
   ['brandCenterImg','loginLogo'].forEach(id=>{ const el=document.getElementById(id); if(el) el.src=LOGO_ASSISTENTEON; });
 })();
 
+// preenche o e-mail lembrado (se houver) na tela de login
+function preencherEmailLembrado(){
+  try{
+    const em=localStorage.getItem('eo_email_lembrado');
+    const campo=document.getElementById('login_user');
+    const chk=document.getElementById('login_lembrar');
+    if(em && campo){ campo.value=em; if(chk) chk.checked=true;
+      // foca na senha já que o e-mail está preenchido
+      const pass=document.getElementById('login_pass'); if(pass) setTimeout(()=>pass.focus(),100);
+    }
+  }catch(e){}
+}
+
 async function bootAssistenteOn(){
   if(sessao){
     // já há sessão salva. No modo Firebase, precisamos carregar os dados da nuvem antes.
@@ -4559,6 +4622,7 @@ async function bootAssistenteOn(){
   } else {
     document.getElementById('appRoot').style.display='none';
     const ls=document.getElementById('loginScreen'); ls.classList.remove('hidden'); ls.classList.add('flex');
+    preencherEmailLembrado();
   }
 }
 bootAssistenteOn();
