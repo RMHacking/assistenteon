@@ -334,31 +334,73 @@ const LOGO_ASSISTENTEON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAbIAAAB
 
    >>> GUIA COMPLETO DE MIGRAÇÃO: veja o arquivo "GUIA-FIREBASE.md" <<<
    ========================================================================== */
-const DB_BACKEND = 'local';   // 'local' (localStorage)  |  'firebase' (futuro)
+const DB_BACKEND = 'firebase';   // 'local' (localStorage)  |  'firebase' (nuvem)
 
 // usuário atual define o "namespace" dos dados. Definido no login.
 let DB_USER = (function(){ try{ return JSON.parse(localStorage.getItem('eo_sessao'))?.user || 'anon'; }catch(e){ return 'anon'; } })();
 function dbSetUser(u){ DB_USER = u || 'anon'; }
 
+/* ==========================================================================
+   CACHE EM MEMÓRIA (Firebase)
+   No login, todos os dados do usuário são carregados de uma vez do Firestore
+   para FB_CACHE. O sistema lê/escreve neste cache (rápido, síncrono como antes),
+   e as gravações são enviadas ao Firestore em segundo plano (debounce).
+   ========================================================================== */
+let FB_CACHE = {};          // { chave: valor }
+let FB_READY = false;       // true quando os dados do usuário já foram carregados
+const FB_PENDING = {};      // chaves aguardando gravação (debounce)
+let FB_SAVE_TIMER = null;
+
+// Carrega todos os dados do usuário logado do Firestore para o cache.
+// Chamado no login (após autenticar) e no boot (se já houver sessão).
+async function carregarDadosFirebase(){
+  FB_CACHE = {}; FB_READY = false;
+  if(!window.FB || !window.FB.db || !DB_USER || DB_USER==='anon'){
+    FB_READY = true; // sem firebase: cache vazio, sistema usa defaults
+    return;
+  }
+  try{
+    const snap = await window.FB.db.collection('users').doc(DB_USER).collection('dados').get();
+    snap.forEach(doc=>{
+      const d = doc.data();
+      FB_CACHE[doc.id] = (d && 'v' in d) ? d.v : null;
+    });
+    FB_READY = true;
+    console.log('[AssistenteOn] Dados carregados da nuvem:', Object.keys(FB_CACHE).length, 'registros');
+  }catch(e){
+    console.error('[AssistenteOn] Erro ao carregar dados da nuvem:', e);
+    FB_READY = true; // libera o sistema mesmo com erro (usa defaults)
+    if(window.toast) toast('Não foi possível carregar seus dados da nuvem.');
+  }
+}
+
+// Envia ao Firestore todas as chaves pendentes (agrupadas).
+async function flushFirebase(){
+  if(!window.FB || !window.FB.db || !DB_USER || DB_USER==='anon') return;
+  const chaves = Object.keys(FB_PENDING);
+  if(!chaves.length) return;
+  const base = window.FB.db.collection('users').doc(DB_USER).collection('dados');
+  for(const k of chaves){
+    const v = FB_PENDING[k];
+    delete FB_PENDING[k];
+    try{ await base.doc(k).set({ v }, { merge:true }); }
+    catch(e){ console.error('[AssistenteOn] Erro ao gravar', k, e); FB_PENDING[k]=v; /* recoloca para tentar depois */ }
+  }
+}
+
 const DB = {
-  // chave física: prefixo + usuário + chave lógica
+  // chave física (modo local): prefixo + usuário + chave lógica
   _key(k){ return 'eo_'+DB_USER+'_'+k; },
   load(k, def){
     if(DB_BACKEND==='local'){
       try{
-        // compatibilidade: se existir dado antigo sem namespace (eo_<k>), migra para o novo formato
         let raw=localStorage.getItem(this._key(k));
         if(raw===null){ const legado=localStorage.getItem('eo_'+k); if(legado!==null){ localStorage.setItem(this._key(k), legado); raw=legado; } }
         return raw===null ? def : (JSON.parse(raw) ?? def);
       }catch(e){ return def; }
     }
-    /* ===== FIREBASE (futuro) — leitura =====
-       Aqui você lê de users/<uid>/<k>. Como o Firestore é assíncrono, a
-       estratégia recomendada é: no login, carregar todas as chaves de uma vez
-       para um cache em memória (ver initFirebaseData no guia) e este load()
-       apenas retornar do cache. Ex:
-         return (FB_CACHE[k] ?? def);
-    */
+    // ===== FIREBASE — leitura (do cache em memória) =====
+    if(k in FB_CACHE && FB_CACHE[k]!==null && FB_CACHE[k]!==undefined) return FB_CACHE[k];
     return def;
   },
   save(k, v){
@@ -366,15 +408,17 @@ const DB = {
       try{ localStorage.setItem(this._key(k), JSON.stringify(v)); }catch(e){ toast&&toast('Armazenamento cheio.'); }
       return;
     }
-    /* ===== FIREBASE (futuro) — escrita =====
-       Grave em users/<uid>/<k>. Recomenda-se "debounce" para não gravar a cada
-       tecla. Ex (Firestore modular):
-         setDoc(doc(db,'users',DB_USER,'dados',k), { v }, {merge:true});
-       E atualize o cache: FB_CACHE[k]=v;
-    */
+    // ===== FIREBASE — escrita (cache imediato + debounce para a nuvem) =====
+    FB_CACHE[k] = v;
+    FB_PENDING[k] = v;
+    clearTimeout(FB_SAVE_TIMER);
+    FB_SAVE_TIMER = setTimeout(flushFirebase, 800);
   }
 };
 function persist(k){ DB.save(k, store[k]); }
+
+// grava o que estiver pendente antes de fechar/atualizar a página (segurança)
+window.addEventListener('beforeunload', ()=>{ try{ flushFirebase(); }catch(e){} });
 
 /* --------------------------------------------------------------------------
    store: o estado do app em memória. É montado a partir do DB.
@@ -4268,6 +4312,8 @@ async function fazerLogin(){
     sessao=res;
     localStorage.setItem('eo_sessao', JSON.stringify(sessao));
     dbSetUser(sessao.user);   // namespace dos dados = uid (ou usuário local)
+    if(btn){ btn.textContent='Carregando seus dados...'; }
+    await carregarDadosFirebase();   // busca os dados do usuário na nuvem (aguarda)
     rebuildStore();
     document.getElementById('login_pass').value='';
     if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
@@ -4281,10 +4327,12 @@ async function fazerLogin(){
 }
 
 async function logout(){
+  try{ await flushFirebase(); }catch(e){}   // grava pendências antes de sair
   localStorage.removeItem('eo_sessao'); 
   try{ if(window.FB && window.FB.auth && sessao && !sessao.local){ await window.FB.auth.signOut(); } }catch(e){}
   sessao=null;
   dbSetUser('anon');
+  FB_CACHE={}; FB_READY=false;   // limpa o cache para não vazar dados entre contas
   document.getElementById('appRoot').style.display='none';
   const ls=document.getElementById('loginScreen'); ls.classList.remove('hidden'); ls.classList.add('flex');
   document.getElementById('login_user').value=''; document.getElementById('login_pass').value='';
@@ -4361,11 +4409,24 @@ function alertaAoAbrir(){
 (function aplicarLogoSistema(){
   ['brandCenterImg','loginLogo'].forEach(id=>{ const el=document.getElementById(id); if(el) el.src=LOGO_ASSISTENTEON; });
 })();
-if(sessao){ iniciarApp(); }
-else {
-  document.getElementById('appRoot').style.display='none';
-  const ls=document.getElementById('loginScreen'); ls.classList.remove('hidden'); ls.classList.add('flex');
+
+async function bootAssistenteOn(){
+  if(sessao){
+    // já há sessão salva. No modo Firebase, precisamos carregar os dados da nuvem antes.
+    if(DB_BACKEND==='firebase' && window.FB && window.FB.db && sessao.user && !sessao.local){
+      // mostra a tela de login temporariamente com aviso de carregamento seria ideal,
+      // mas para simplificar, carregamos os dados e então iniciamos.
+      dbSetUser(sessao.user);
+      await carregarDadosFirebase();
+      rebuildStore();
+    }
+    iniciarApp();
+  } else {
+    document.getElementById('appRoot').style.display='none';
+    const ls=document.getElementById('loginScreen'); ls.classList.remove('hidden'); ls.classList.add('flex');
+  }
 }
+bootAssistenteOn();
 </script>
 </body>
 </html>
