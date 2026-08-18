@@ -189,12 +189,12 @@ try {
       <p class="text-muted text-sm mt-1">Seu escritório na palma da mão</p>
     </div>
     <div class="bg-panel border border-edge rounded-2xl p-6">
-      <label class="block mb-3"><span class="text-xs text-muted mb-1 block">Usuário</span>
-        <input id="login_user" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login_pass').focus()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2.5 text-sm" placeholder="Seu usuário"></label>
+      <label class="block mb-3"><span class="text-xs text-muted mb-1 block">E-mail</span>
+        <input id="login_user" type="email" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login_pass').focus()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2.5 text-sm" placeholder="seu@email.com"></label>
       <label class="block mb-4"><span class="text-xs text-muted mb-1 block">Senha</span>
         <input id="login_pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')fazerLogin()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2.5 text-sm" placeholder="••••••"></label>
       <div id="login_erro" class="hidden text-red-400 text-xs mb-3"></div>
-      <button onclick="fazerLogin()" class="w-full py-2.5 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">Entrar</button>
+      <button id="login_btn" onclick="fazerLogin()" class="w-full py-2.5 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">Entrar</button>
     </div>
     <p class="text-center text-[11px] text-muted mt-4">Acesso restrito. Fale com o administrador para obter seu acesso.</p>
   </div>
@@ -4184,44 +4184,107 @@ const CONTAS = {
 };
 let sessao = DB.load ? (function(){ try{ return JSON.parse(localStorage.getItem('eo_sessao'))||null; }catch(e){ return null; } })() : null;
 
-// >>> PONTO DE TROCA: substitua o corpo por Firebase Auth (signInWithEmailAndPassword...) <<<
-// Deve devolver { user, papel, nome } em caso de sucesso, ou null se falhar.
-function autenticar(usuario, senha){
+// Login LOCAL (fallback): usado só se o Firebase não estiver disponível.
+function autenticarLocal(usuario, senha){
   const conta=CONTAS[usuario];
   if(!conta || conta.senha!==senha) return null;
-  return { user:usuario, papel:conta.papel, nome:conta.nome };
-  /* ===== FIREBASE (futuro) =====
-     const cred = await signInWithEmailAndPassword(auth, email, senha);
-     const perfil = await getDoc(doc(db,'users',cred.user.uid));
-     return { user: cred.user.uid, papel: perfil.data().role||'cliente', nome: perfil.data().nome };
-  */
+  return { user:usuario, papel:conta.papel, nome:conta.nome, local:true };
 }
+
+// Login via FIREBASE AUTH (e-mail/senha). Retorna { user(uid), papel, nome, email } ou lança erro.
+async function autenticarFirebase(email, senha){
+  const cred = await window.FB.auth.signInWithEmailAndPassword(email, senha);
+  const uid = cred.user.uid;
+  // busca o perfil (papel/nome) no Firestore em users/<uid>. Se não existir, assume cliente.
+  let papel='cliente', nome=email.split('@')[0];
+  try{
+    const snap = await window.FB.db.collection('users').doc(uid).get();
+    if(snap.exists){
+      const d=snap.data();
+      papel = d.role || d.papel || 'cliente';
+      nome  = d.nome || nome;
+      if(d.ativo===false){ // conta desativada pelo admin
+        await window.FB.auth.signOut();
+        throw new Error('__DESATIVADA__');
+      }
+    }
+  }catch(e){
+    if(e.message==='__DESATIVADA__') throw e;
+    // se falhar a leitura do perfil, segue como cliente (não bloqueia o login)
+  }
+  return { user:uid, papel, nome, email };
+}
+
 function preencherLogin(u){
   document.getElementById('login_user').value=u;
   document.getElementById('login_pass').value=CONTAS[u]?.senha||'';
   document.getElementById('login_pass').focus();
 }
-function fazerLogin(){
-  const u=(document.getElementById('login_user').value||'').trim().toLowerCase();
+
+async function fazerLogin(){
+  const u=(document.getElementById('login_user').value||'').trim();
   const p=document.getElementById('login_pass').value||'';
   const erro=document.getElementById('login_erro');
-  const res=autenticar(u,p);
-  if(!res){
-    erro.textContent='Usuário ou senha incorretos.'; erro.classList.remove('hidden');
-    return;
-  }
-  sessao=res;
-  localStorage.setItem('eo_sessao', JSON.stringify(sessao));
-  dbSetUser(sessao.user);   // troca o namespace dos dados para este usuário
-  rebuildStore();           // recarrega o store com os dados do usuário logado
+  const btn=document.getElementById('login_btn');
   erro.classList.add('hidden');
-  document.getElementById('login_pass').value='';
-  iniciarApp();
+  if(!u || !p){ erro.textContent='Preencha e-mail e senha.'; erro.classList.remove('hidden'); return; }
+
+  // trava o botão durante a tentativa (evita duplo clique)
+  if(btn){ btn.disabled=true; btn.textContent='Entrando...'; }
+
+  try{
+    let res=null;
+    if(window.FB && window.FB.auth){
+      // ===== CAMINHO PRINCIPAL: Firebase Auth =====
+      try{
+        res = await autenticarFirebase(u, p);
+      }catch(e){
+        // se o e-mail digitado for uma das contas locais antigas (sem @), tenta local
+        const ul=u.toLowerCase();
+        if(CONTAS[ul]){ res = autenticarLocal(ul, p); }
+        if(!res){
+          if(e.message==='__DESATIVADA__'){
+            erro.textContent='Sua conta está desativada. Fale com o administrador.';
+          }else{
+            erro.textContent='E-mail ou senha incorretos.';
+          }
+          erro.classList.remove('hidden');
+          if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
+          return;
+        }
+      }
+    } else {
+      // ===== FALLBACK: sem Firebase (offline), usa login local =====
+      res = autenticarLocal(u.toLowerCase(), p);
+      if(!res){
+        erro.textContent='Usuário ou senha incorretos.';
+        erro.classList.remove('hidden');
+        if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
+        return;
+      }
+    }
+
+    // sucesso
+    sessao=res;
+    localStorage.setItem('eo_sessao', JSON.stringify(sessao));
+    dbSetUser(sessao.user);   // namespace dos dados = uid (ou usuário local)
+    rebuildStore();
+    document.getElementById('login_pass').value='';
+    if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
+    iniciarApp();
+  }catch(e){
+    erro.textContent='Erro ao entrar. Tente novamente.';
+    erro.classList.remove('hidden');
+    if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
+    console.error('[AssistenteOn] erro no login:', e);
+  }
 }
-function logout(){
-  localStorage.removeItem('eo_sessao'); sessao=null;
+
+async function logout(){
+  localStorage.removeItem('eo_sessao'); 
+  try{ if(window.FB && window.FB.auth && sessao && !sessao.local){ await window.FB.auth.signOut(); } }catch(e){}
+  sessao=null;
   dbSetUser('anon');
-  /* ===== FIREBASE (futuro): signOut(auth); ===== */
   document.getElementById('appRoot').style.display='none';
   const ls=document.getElementById('loginScreen'); ls.classList.remove('hidden'); ls.classList.add('flex');
   document.getElementById('login_user').value=''; document.getElementById('login_pass').value='';
