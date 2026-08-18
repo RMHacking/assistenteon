@@ -953,54 +953,113 @@ RENDER.dashboard = () => {
 
 /* ============ CLIENTES ============ */
 let clientSearch='';
+let clientFiltroStatus='todos';  // todos | pago | aberto | parcelado
+
+// retorna a categoria de status do cliente (para as sub-abas)
+function clienteCategoria(c){
+  const svc=c.servicos||[];
+  if(!svc.length) return 'aberto';
+  const temParcelado=svc.some(s=>s.parcelas&&s.parcelas.length);
+  const total=svc.reduce((a,x)=>a+svcValorTotal(x),0);
+  const pago=svc.reduce((a,x)=>a+svcValorPago(x),0);
+  if(temParcelado && pago<total) return 'parcelado';   // parcelado com pendência
+  if(pago>=total && total>0) return 'pago';
+  return 'aberto';  // em aberto / a receber
+}
+
 RENDER.clients = () => {
   const v=document.getElementById('view');
-  const list = store.clients.filter(c=>{
-    const q=clientSearch.toLowerCase();
-    return !q || [c.nome,c.doc,c.email,c.telefone].some(x=>(x||'').toLowerCase().includes(q));
-  });
   v.innerHTML = `
   <div class="fade space-y-4">
     <div class="flex flex-col sm:flex-row gap-3 sm:items-center">
-      <input oninput="clientSearch=this.value; RENDER.clients()" value="${esc(clientSearch)}" placeholder="Buscar por nome, CNPJ/CPF, e-mail…"
+      <input id="clientSearchInput" oninput="onClientSearch(this.value)" value="${esc(clientSearch)}" placeholder="Buscar por nome, CNPJ/CPF, e-mail…"
         class="flex-1 bg-panel border border-edge rounded-lg px-3 py-2 text-sm">
-      <button onclick="clientForm()" class="px-4 py-2 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">+ Novo cliente</button>
+      <button onclick="clientForm()" class="px-4 py-2 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2 shrink-0">+ Novo cliente</button>
     </div>
-    ${list.length? `<div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">`+list.map(c=>{
-      const svc=c.servicos||[];
-      const total=svc.reduce((a,x)=>a+svcValorTotal(x),0);
-      const pago=svc.reduce((a,x)=>a+svcValorPago(x),0);
-      const aberto=total-pago;
-      const sel=clienteStatusSelo(c);
-      return `<div class="bg-panel border border-edge rounded-xl p-4">
-        <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-medium truncate">${esc(c.nome)}</span>
-              <span class="px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0 ${sel.cls}">${sel.txt}</span>
-            </div>
-            <div class="text-xs text-muted">${esc(c.doc||'—')}</div>
-          </div>
-          <div class="flex gap-1 shrink-0">
-            <button onclick="clientForm('${c.id}')" class="p-1.5 rounded hover:bg-edge text-muted" title="Editar">✎</button>
-            <button onclick="delClient('${c.id}')" class="p-1.5 rounded hover:bg-edge text-red-400" title="Excluir">🗑</button>
-          </div>
-        </div>
-        <div class="text-xs text-muted mt-3 space-y-1">
-          ${c.telefone?`<div>📞 ${esc(c.telefone)}</div>`:''}
-          ${c.email?`<div class="truncate">✉ ${esc(c.email)}</div>`:''}
-          ${c.endereco?`<div class="truncate">📍 ${esc(c.endereco)}</div>`:''}
-        </div>
-        <div class="flex items-center justify-between mt-3 pt-3 border-t border-edge">
-          <div class="text-xs"><span class="text-muted">${svc.length} serviço(s)</span>
-            ${aberto>0?`<span class="text-amber-400 ml-2">${fmtBRL(aberto)} a receber</span>`
-              : (pago>0?`<span class="text-green-400 ml-2">${fmtBRL(pago)} recebido</span>`:'')}</div>
-          <button onclick="openClient('${c.id}')" class="text-xs text-accent hover:underline">Serviços →</button>
-        </div>
-      </div>`;
-    }).join('')+`</div>` : card(emptyState(clientSearch?'Nenhum cliente encontrado.':'Cadastre seu primeiro cliente.'))}
+    <div id="clientTabs" class="flex flex-wrap gap-2"></div>
+    <div id="clientList"></div>
   </div>`;
+  renderClientTabs();
+  renderClientList();
 };
+
+function renderClientTabs(){
+  const box=document.getElementById('clientTabs'); if(!box) return;
+  const cont={ todos:store.clients.length, pago:0, aberto:0, parcelado:0 };
+  store.clients.forEach(c=>{ cont[clienteCategoria(c)]++; });
+  const abas=[
+    {id:'todos', txt:'Todos', cls:'text-white'},
+    {id:'pago', txt:'Pagos', cls:'text-green-400'},
+    {id:'aberto', txt:'Em aberto', cls:'text-amber-400'},
+    {id:'parcelado', txt:'Parcelados', cls:'text-sky-400'},
+  ];
+  box.innerHTML = abas.map(a=>{
+    const ativo = clientFiltroStatus===a.id;
+    return `<button onclick="setClientFiltro('${a.id}')" class="px-3 py-1.5 rounded-lg text-sm border transition ${ativo?'bg-accent/15 border-accent/40 '+a.cls:'bg-panel border-edge text-muted hover:border-accent/30'}">
+      ${a.txt} <span class="opacity-60">(${cont[a.id]})</span>
+    </button>`;
+  }).join('');
+}
+
+function renderClientList(){
+  const box=document.getElementById('clientList'); if(!box) return;
+  const q=clientSearch.toLowerCase();
+  let list = store.clients.filter(c=>{
+    return !q || [c.nome,c.doc,c.email,c.telefone].some(x=>(x||'').toLowerCase().includes(q));
+  });
+  if(clientFiltroStatus!=='todos'){
+    list = list.filter(c=>clienteCategoria(c)===clientFiltroStatus);
+  }
+  if(!list.length){
+    box.innerHTML = card(emptyState(clientSearch?'Nenhum cliente encontrado.':(clientFiltroStatus!=='todos'?'Nenhum cliente nesta categoria.':'Cadastre seu primeiro cliente.')));
+    return;
+  }
+  box.innerHTML = `<div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">`+list.map(c=>{
+    const svc=c.servicos||[];
+    const total=svc.reduce((a,x)=>a+svcValorTotal(x),0);
+    const pago=svc.reduce((a,x)=>a+svcValorPago(x),0);
+    const aberto=total-pago;
+    const sel=clienteStatusSelo(c);
+    return `<div class="bg-panel border border-edge rounded-xl p-4">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-medium truncate">${esc(c.nome)}</span>
+            <span class="px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0 ${sel.cls}">${sel.txt}</span>
+          </div>
+          <div class="text-xs text-muted">${esc(c.doc||'—')}</div>
+        </div>
+        <div class="flex gap-1 shrink-0">
+          <button onclick="clientForm('${c.id}')" class="p-1.5 rounded hover:bg-edge text-muted" title="Editar">✎</button>
+          <button onclick="delClient('${c.id}')" class="p-1.5 rounded hover:bg-edge text-red-400" title="Excluir">🗑</button>
+        </div>
+      </div>
+      <div class="text-xs text-muted mt-3 space-y-1">
+        ${c.telefone?`<div>📞 ${esc(c.telefone)}</div>`:''}
+        ${c.email?`<div class="truncate">✉ ${esc(c.email)}</div>`:''}
+        ${c.endereco?`<div class="truncate">📍 ${esc(c.endereco)}</div>`:''}
+      </div>
+      <div class="flex items-center justify-between mt-3 pt-3 border-t border-edge">
+        <div class="text-xs"><span class="text-muted">${svc.length} serviço(s)</span>
+          ${aberto>0?`<span class="text-amber-400 ml-2">${fmtBRL(aberto)} a receber</span>`
+            : (pago>0?`<span class="text-green-400 ml-2">${fmtBRL(pago)} recebido</span>`:'')}</div>
+        <button onclick="openClient('${c.id}')" class="text-xs text-accent hover:underline">Serviços →</button>
+      </div>
+    </div>`;
+  }).join('')+`</div>`;
+}
+
+// busca sem recriar o campo (não perde o foco) — só atualiza a lista
+function onClientSearch(valor){
+  clientSearch = valor;
+  renderClientTabs();
+  renderClientList();
+}
+function setClientFiltro(id){
+  clientFiltroStatus = id;
+  renderClientTabs();
+  renderClientList();
+}
 function clientForm(id){
   const c = id? store.clients.find(x=>x.id===id) : {};
   openModal(id?'Editar cliente':'Novo cliente', `
@@ -1284,7 +1343,11 @@ function openClient(id){
       <input id="s_desc" placeholder="Descrição (ex: Venda de produto X, Consultoria…)" class="w-full bg-ink border border-edge rounded-lg px-3 py-2 text-sm mb-2">
       <div class="grid grid-cols-2 gap-2 mb-2">
         <input id="s_data" type="date" value="${todayStr()}" class="bg-ink border border-edge rounded-lg px-2 py-2 text-sm">
-        <input id="s_valor" type="number" step="0.01" placeholder="Valor total" class="bg-ink border border-edge rounded-lg px-2 py-2 text-sm">
+        <input id="s_valor" type="number" step="0.01" placeholder="Valor total" oninput="calcDescontoSvc()" class="bg-ink border border-edge rounded-lg px-2 py-2 text-sm">
+      </div>
+      <div class="grid grid-cols-2 gap-2 mb-2 items-center">
+        <input id="s_desc_pct" type="number" min="0" max="100" step="0.1" placeholder="Desconto (%)" oninput="calcDescontoSvc()" class="bg-ink border border-edge rounded-lg px-2 py-2 text-sm">
+        <div class="text-xs text-muted">Valor final: <span id="s_valorFinal" class="text-accent font-semibold">—</span></div>
       </div>
       <label class="flex items-center gap-2 text-sm mb-2 cursor-pointer">
         <input type="checkbox" id="s_parcelar" onchange="document.getElementById('parcelaOpts').classList.toggle('hidden', !this.checked)" class="accent-[#4f9d8f]">
@@ -1386,10 +1449,28 @@ function renderSvcItem(id,s){
   html += `</div>`;
   return html;
 }
+// calcula valor final do serviço com desconto (preview)
+function calcDescontoSvc(){
+  const valor=parseFloat(document.getElementById('s_valor')?.value)||0;
+  const pct=parseFloat(document.getElementById('s_desc_pct')?.value)||0;
+  const box=document.getElementById('s_valorFinal');
+  if(box){
+    const final=valor-(valor*pct/100);
+    if(valor>0 && pct>0){ box.textContent=fmtBRL(final); }
+    else if(valor>0){ box.textContent=fmtBRL(valor); }
+    else { box.textContent='—'; }
+  }
+  // atualiza também a prévia de parcelas se estiver aberta
+  if(typeof atualizaPrevParcela==='function') atualizaPrevParcela();
+}
+
 function addSvc(id){
   const c=store.clients.find(x=>x.id===id);
   const desc=val('s_desc'); if(!desc){ toast('Descreva o serviço.'); return; }
-  const valor=val('s_valor'); const data=val('s_data');
+  const valorBruto=parseFloat(val('s_valor'))||0;
+  const descPct=parseFloat(document.getElementById('s_desc_pct')?.value)||0;
+  const valor=(valorBruto-(valorBruto*descPct/100)).toFixed(2);  // valor já com desconto
+  const data=val('s_data');
   c.servicos=c.servicos||[];
   const parcelar=document.getElementById('s_parcelar').checked;
   if(parcelar){
@@ -1421,11 +1502,11 @@ function addSvc(id){
       const v = i===datas.length-1 ? (restante - each*(datas.length-1)) : each;
       parcelas.push({id:uid(), valor:v.toFixed(2), venc, status:'Pendente'});
     });
-    c.servicos.unshift({id:uid(), desc, data, valor:valor, status:'Pendente', parcelas});
+    c.servicos.unshift({id:uid(), desc, data, valor:valor, valorBruto:valorBruto, descontoPct:descPct, status:'Pendente', parcelas});
   } else {
-    c.servicos.unshift({id:uid(), desc, data, valor, status:'Pendente'});
+    c.servicos.unshift({id:uid(), desc, data, valor, valorBruto:valorBruto, descontoPct:descPct, status:'Pendente'});
   }
-  persist('clients'); openClient(id); RENDER.clients(); if(current==='cobrancas')RENDER.cobrancas(); toast('Registrado.');
+  persist('clients'); openClient(id); RENDER.clients(); if(current==='cobrancas')RENDER.cobrancas(); toast(descPct>0?'Registrado com '+descPct+'% de desconto.':'Registrado.');
 }
 function delSvc(id,sid){ const c=store.clients.find(x=>x.id===id); c.servicos=c.servicos.filter(s=>s.id!==sid); persist('clients'); openClient(id); RENDER.clients(); if(current==='cobrancas')RENDER.cobrancas(); }
 function setSvcStatus(id,sid,novo){ const c=store.clients.find(x=>x.id===id); const s=c.servicos.find(x=>x.id===sid); s.status=novo; persist('clients'); openClient(id); RENDER.clients(); toast(novo==='Pago'?'Marcado como pago.':'Reaberto.'); }
@@ -1841,6 +1922,8 @@ RENDER.vendas = () => {
 function setComissao(v){ store.config.comissaoPct=Number(v)||0; persist('config'); }
 function vendaForm(id){
   const x=id? store.vendas.find(v=>v.id===id):{data:todayStr(), comissaoPct:store.config.comissaoPct||0};
+  // ao editar, mostra o valor BRUTO no campo (o desconto é reaplicado ao salvar)
+  const valorCampo = (x.valorBruto!==undefined && x.valorBruto!=='') ? x.valorBruto : x.valor;
   const prodOpts = store.produtos.length? `<label class="block mb-3"><span class="text-xs text-muted mb-1 block">Preencher a partir de um produto (opcional)</span>
     <select id="vd_prod" onchange="preencherProduto()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2 text-sm">
       <option value="">— selecionar —</option>${store.produtos.map(p=>`<option value="${p.id}">${esc(p.nome)} · ${fmtBRL(p.preco)}</option>`).join('')}
@@ -1853,8 +1936,15 @@ function vendaForm(id){
     ${prodOpts}
     ${field('Descrição','vd_desc',x.desc)}
     <div class="grid grid-cols-2 gap-3">
-      ${field('Valor (R$)','vd_valor',x.valor,'number','step="0.01"')}
+      ${field('Valor (R$)','vd_valor',valorCampo,'number','step="0.01" oninput="calcDescontoVenda()"')}
       ${field('Data da venda','vd_data',x.data||todayStr(),'date')}
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      ${field('Desconto (%)','vd_desc_pct',x.descontoPct||'','number','min="0" max="100" step="0.1" oninput="calcDescontoVenda()"')}
+      <div>
+        <span class="text-xs text-muted mb-1 block">Valor final</span>
+        <div id="vd_valorFinal" class="w-full bg-ink/50 border border-edge rounded-lg px-3 py-2 text-sm font-semibold text-accent">—</div>
+      </div>
     </div>
     ${cliOpts}
     <div class="grid grid-cols-2 gap-3">
@@ -1867,12 +1957,25 @@ function vendaForm(id){
     ${field('Comissão (%)','vd_com',x.comissaoPct??store.config.comissaoPct??0,'number','step="0.1"')}
     ${btnRow('Salvar',`saveVenda('${id||''}')`)}
   `);
+  calcDescontoVenda();
   // mostra/esconde parcelas conforme forma de pagamento
   const selPg=document.getElementById('vd_pgto');
   if(selPg) selPg.addEventListener('change',()=>{
     const mostra=['Parcelado','Cartão de crédito'].includes(selPg.value);
     document.getElementById('vd_parcelasWrap').classList.toggle('hidden', !mostra);
   });
+}
+// calcula o valor final da venda com o desconto aplicado
+function calcDescontoVenda(){
+  const valor=parseFloat(val('vd_valor'))||0;
+  const pct=parseFloat(val('vd_desc_pct'))||0;
+  const final=valor - (valor*pct/100);
+  const box=document.getElementById('vd_valorFinal');
+  if(box){
+    if(valor>0 && pct>0){ box.textContent=fmtBRL(final)+' ('+pct+'% off)'; }
+    else if(valor>0){ box.textContent=fmtBRL(valor); }
+    else { box.textContent='—'; }
+  }
 }
 function preencherProduto(){
   const pid=document.getElementById('vd_prod').value; if(!pid) return;
@@ -1882,11 +1985,14 @@ function preencherProduto(){
 }
 function saveVenda(id){
   const desc=val('vd_desc'); if(!desc){ toast('Descreva a venda.'); return; }
-  const data={desc, valor:val('vd_valor'), data:val('vd_data'), clienteId:document.getElementById('vd_cli').value, comissaoPct:val('vd_com'),
+  const valorBruto=parseFloat(val('vd_valor'))||0;
+  const descPct=parseFloat(val('vd_desc_pct'))||0;
+  const valorFinal=valorBruto - (valorBruto*descPct/100);
+  const data={desc, valor:valorFinal, valorBruto:valorBruto, descontoPct:descPct, data:val('vd_data'), clienteId:document.getElementById('vd_cli').value, comissaoPct:val('vd_com'),
     pgto:val('vd_pgto'), dpag:val('vd_dpag'), parcelas:val('vd_parcelas')};
   if(id){ Object.assign(store.vendas.find(v=>v.id===id),data); }
   else{ store.vendas.push({id:uid(), ...data}); }
-  persist('vendas'); closeModal(); RENDER.vendas(); toast('Venda registrada.');
+  persist('vendas'); closeModal(); RENDER.vendas(); toast(descPct>0?'Venda registrada com '+descPct+'% de desconto.':'Venda registrada.');
 }
 function delVenda(id){ store.vendas=store.vendas.filter(v=>v.id!==id); persist('vendas'); RENDER.vendas(); }
 
@@ -2121,30 +2227,42 @@ function relHoje(){ relRef=todayStr(); RENDER.relatorios(); }
 function relPDF(){
   const r=relRange(relPeriodo, relRef); const d=relDados(r.ini,r.fim); const b=store.marca; const cor=b.cor||'#4f9d8f';
   const win=window.open('','_blank'); if(!win){ toast('Permita pop-ups para gerar o PDF.'); return; }
-  const linhaResumo=(lbl,val,n)=>`<tr><td>${lbl}</td><td style="text-align:center">${n}</td><td style="text-align:right"><b>${fmtBRL(val)}</b></td></tr>`;
-  const secTable=(titulo,cols,rows)=> rows.length? `<h2>${titulo}</h2><table><thead><tr>${cols.map((c,i)=>`<th style="${i===cols.length-1?'text-align:right':''}">${c}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td style="${i===r.length-1?'text-align:right':''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`:'';
+  const linhaResumo=(lbl,val,n)=>`<tr><td>${lbl}</td><td class="col-qtd">${n}</td><td class="col-valor"><b>${fmtBRL(val)}</b></td></tr>`;
+  // secTable: primeira coluna "Data" e última "Valor" recebem larguras fixas para melhor leitura no A4
+  const secTable=(titulo,cols,rows)=> rows.length? `<h2>${titulo}</h2><table><thead><tr>${cols.map((c,i)=>{
+      let cls=''; if(c==='Data')cls='col-data'; else if(i===cols.length-1)cls='col-valor';
+      return `<th class="${cls}">${c}</th>`;
+    }).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map((c,i)=>{
+      let cls=''; if(cols[i]==='Data')cls='col-data'; else if(i===row.length-1)cls='col-valor';
+      return `<td class="${cls}">${c}</td>`;
+    }).join('')}</tr>`).join('')}</tbody></table>`:'';
   win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório ${esc(r.label)}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1c23;padding:40px;font-size:13px;line-height:1.5}
-    .head{display:flex;align-items:center;gap:16px;border-bottom:3px solid ${cor};padding-bottom:16px;margin-bottom:20px}
-    .logo{width:64px;height:64px;object-fit:contain;border-radius:8px}
-    .logo-ph{width:64px;height:64px;border-radius:8px;background:${cor};color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700}
-    h1{font-size:20px;color:${cor}}.sub{color:#666;font-size:13px}
-    h2{font-size:14px;margin:22px 0 8px;color:${cor}}
-    table{width:100%;border-collapse:collapse;margin-bottom:8px}
-    th{background:${cor};color:#fff;padding:8px;text-align:left;font-size:11px}
-    td{padding:8px;border-bottom:1px solid #eee}
-    .foot{margin-top:36px;padding-top:14px;border-top:1px solid #eee;color:#999;font-size:11px;text-align:center}
-    .btn{background:${cor};color:#fff;border:0;padding:12px 24px;border-radius:8px;font-size:14px;cursor:pointer;margin:24px auto;display:block}
-    @media print{body{padding:20px}.noprint{display:none}}
-  </style></head><body>
+    body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1c23;padding:0;font-size:12px;line-height:1.45}
+    .page{max-width:760px;margin:0 auto;padding:32px 36px}
+    .head{display:flex;align-items:center;gap:14px;border-bottom:3px solid ${cor};padding-bottom:14px;margin-bottom:18px}
+    .logo{width:56px;height:56px;object-fit:contain;border-radius:8px}
+    .logo-ph{width:56px;height:56px;border-radius:8px;background:${cor};color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700}
+    h1{font-size:19px;color:${cor}}.sub{color:#666;font-size:12px;margin-top:2px}
+    h2{font-size:13px;margin:20px 0 7px;color:${cor};font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+    table{width:100%;border-collapse:collapse;margin-bottom:6px;table-layout:fixed}
+    th{background:${cor};color:#fff;padding:7px 9px;text-align:left;font-size:10.5px;font-weight:600}
+    td{padding:6px 9px;border-bottom:1px solid #eee;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .col-data{width:80px}
+    .col-valor{width:100px;text-align:right}
+    .col-qtd{width:50px;text-align:center}
+    tr:nth-child(even) td{background:#fafafa}
+    .foot{margin-top:30px;padding-top:12px;border-top:1px solid #eee;color:#999;font-size:10.5px;text-align:center}
+    .btn{background:${cor};color:#fff;border:0;padding:11px 22px;border-radius:8px;font-size:14px;cursor:pointer;margin:20px auto;display:block}
+    @media print{.page{padding:0}.noprint{display:none}thead{display:table-header-group}tr{page-break-inside:avoid}}
+  </style></head><body><div class="page">
   <div class="head">
     ${b.logo?`<img src="${b.logo}" class="logo">`:`<div class="logo-ph">${esc((b.nome||'?').slice(0,1).toUpperCase())}</div>`}
     <div><h1>${escHtml(b.nome||'Meu Negócio')}</h1><div class="sub">Relatório de atividades · ${esc(r.label)}</div></div>
   </div>
   <h2>Resumo</h2>
-  <table><thead><tr><th>Indicador</th><th style="text-align:center">Qtd</th><th style="text-align:right">Valor</th></tr></thead><tbody>
+  <table><thead><tr><th>Indicador</th><th class="col-qtd">Qtd</th><th class="col-valor">Valor</th></tr></thead><tbody>
     ${linhaResumo('Vendas no período', d.totalVendas, d.vendas.length)}
     ${linhaResumo('Serviços prestados', d.totalServicos, d.servicos.length)}
     ${linhaResumo('Total recebido', d.recebido, d.recebimentos.length)}
@@ -2156,7 +2274,7 @@ function relPDF(){
   ${secTable('Recebimentos', ['Data','Cliente','Valor'], d.recebimentos.map(x=>[fmtDate(x.data), escHtml(x.cliente), fmtBRL(x.valor)]))}
   <div class="foot">Gerado em ${new Date().toLocaleString('pt-BR')} · ${escHtml(b.nome||'')}</div>
   <button class="btn noprint" onclick="window.print()">Imprimir / Salvar como PDF</button>
-  </body></html>`);
+  </div></body></html>`);
   win.document.close();
 }
 
