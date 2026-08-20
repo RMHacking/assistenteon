@@ -1345,7 +1345,7 @@ function openClient(id){
         <input id="s_data" type="date" value="${todayStr()}" class="bg-ink border border-edge rounded-lg px-2 py-2 text-sm">
         <input id="s_valor" type="number" step="0.01" placeholder="Valor total" oninput="calcDescontoSvc()" class="bg-ink border border-edge rounded-lg px-2 py-2 text-sm">
       </div>
-      <div class="grid grid-cols-2 gap-2 mb-2 items-center">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2 sm:items-center">
         <input id="s_desc_pct" type="number" min="0" max="100" step="0.1" placeholder="Desconto (%)" oninput="calcDescontoSvc()" class="bg-ink border border-edge rounded-lg px-2 py-2 text-sm">
         <div class="text-xs text-muted">Valor final: <span id="s_valorFinal" class="text-accent font-semibold">—</span></div>
       </div>
@@ -1939,7 +1939,7 @@ function vendaForm(id){
       ${field('Valor (R$)','vd_valor',valorCampo,'number','step="0.01" oninput="calcDescontoVenda()"')}
       ${field('Data da venda','vd_data',x.data||todayStr(),'date')}
     </div>
-    <div class="grid grid-cols-2 gap-3">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
       ${field('Desconto (%)','vd_desc_pct',x.descontoPct||'','number','min="0" max="100" step="0.1" oninput="calcDescontoVenda()"')}
       <div>
         <span class="text-xs text-muted mb-1 block">Valor final</span>
@@ -4056,17 +4056,11 @@ RENDER.negocio = () => {
     `)}
 
     ${panel('neg_conta','Conta', `
-      <p class="text-sm mb-1">Você está conectado como <b>${esc(sessao?.nome||'—')}</b> <span class="text-xs text-muted">(${esc(sessao?.user||'')})</span>.</p>
+      <p class="text-sm mb-1">Você está conectado como <b>${esc(sessao?.nome||'—')}</b> <span class="text-xs text-muted">(${esc(sessao?.email||sessao?.user||'')})</span>.</p>
       <p class="text-xs text-muted mb-3">Encerrar a sessão exige login novamente para reabrir o sistema neste dispositivo.</p>
       <button onclick="sairApp()" class="px-4 py-2 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 text-sm font-medium hover:bg-red-500/25">⎋ Sair</button>
       ${ehAdmin()? `<div class="mt-4 pt-3 border-t border-edge">
-        <div class="text-xs text-muted mb-2">Contas de acesso (admin):</div>
-        <div class="text-xs space-y-1">
-          <div>👤 <b>admin</b> / admin123 — acesso total (só você)</div>
-          <div>🧪 <b>teste</b> / teste — demonstração pública</div>
-          <div class="text-muted/70">👥 contas de cliente: serão criadas por você no Firebase, com login, senha e prazo de acesso (ver guia).</div>
-        </div>
-        <div class="text-[11px] text-muted mt-2">Para trocar essas senhas com segurança de verdade e controlar quem usa, o sistema precisa de um servidor (backend).</div>
+        <div class="text-xs text-muted">Novos acessos de clientes são criados automaticamente na compra (Hotmart) ou manualmente no painel de <b>Administração</b>.</div>
       </div>`:''}
     `)}
   </div>`;
@@ -4416,18 +4410,13 @@ document.addEventListener('keydown', e=>{
    custom claims do usuário ou num doc users/<uid> com o campo role — assim
    você controla de fora quem é admin e quem é cliente. Ver GUIA-FIREBASE.md.
    ========================================================================== */
-const CONTAS = {
-  admin:   { senha:'admin123',   papel:'admin',   nome:'Administrador' },
-  teste:   { senha:'teste',      papel:'teste',   nome:'Conta Teste' },
-  cliente: { senha:'cliente',    papel:'cliente', nome:'Cliente' },
-};
+// Contas locais removidas por segurança. O login agora é 100% Firebase.
+const CONTAS = {};
 let sessao = DB.load ? (function(){ try{ return JSON.parse(localStorage.getItem('eo_sessao'))||null; }catch(e){ return null; } })() : null;
 
-// Login LOCAL (fallback): usado só se o Firebase não estiver disponível.
+// Login LOCAL desativado. Mantido apenas para não quebrar chamadas existentes.
 function autenticarLocal(usuario, senha){
-  const conta=CONTAS[usuario];
-  if(!conta || conta.senha!==senha) return null;
-  return { user:usuario, papel:conta.papel, nome:conta.nome, local:true };
+  return null; // sem contas locais — autenticação apenas via Firebase
 }
 
 // Login via FIREBASE AUTH (e-mail/senha). Retorna { user(uid), papel, nome, email } ou lança erro.
@@ -4478,33 +4467,25 @@ async function fazerLogin(){
   try{
     let res=null;
     if(window.FB && window.FB.auth){
-      // ===== CAMINHO PRINCIPAL: Firebase Auth =====
+      // ===== Firebase Auth (único caminho de login) =====
       try{
         res = await autenticarFirebase(u, p);
       }catch(e){
-        // se o e-mail digitado for uma das contas locais antigas (sem @), tenta local
-        const ul=u.toLowerCase();
-        if(CONTAS[ul]){ res = autenticarLocal(ul, p); }
-        if(!res){
-          if(e.message==='__DESATIVADA__'){
-            erro.textContent='Sua conta está desativada. Fale com o administrador.';
-          }else{
-            erro.textContent='E-mail ou senha incorretos.';
-          }
-          erro.classList.remove('hidden');
-          if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
-          return;
+        if(e.message==='__DESATIVADA__'){
+          erro.textContent='Sua conta está desativada. Fale com o administrador.';
+        }else{
+          erro.textContent='E-mail ou senha incorretos.';
         }
-      }
-    } else {
-      // ===== FALLBACK: sem Firebase (offline), usa login local =====
-      res = autenticarLocal(u.toLowerCase(), p);
-      if(!res){
-        erro.textContent='Usuário ou senha incorretos.';
         erro.classList.remove('hidden');
         if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
         return;
       }
+    } else {
+      // Firebase indisponível — não há login offline (por segurança)
+      erro.textContent='Sem conexão com o servidor. Tente novamente em instantes.';
+      erro.classList.remove('hidden');
+      if(btn){ btn.disabled=false; btn.textContent='Entrar'; }
+      return;
     }
 
     // sucesso
