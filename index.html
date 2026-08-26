@@ -1924,6 +1924,28 @@ function saveProd(id){
 function delProd(id){ store.produtos=store.produtos.filter(x=>x.id!==id); persist('produtos'); RENDER.produtos(); }
 
 /* ============ MEUS PRODUTOS (VITRINE P/ DIVULGAÇÃO — HOTMART) ============ */
+// Modelos pré-preenchidos com os produtos do Rafael (dados do Notion).
+// Onde faltou link/valor na documentação, deixei em branco para completar no painel.
+const VITRINE_SEED = [
+  { nome:'AssistenteOn — Sistema de Gestão',
+    desc:'Sistema de gestão completo para autônomos, MEI e pequenos empreendedores. Clientes, cobranças, orçamentos em PDF, vendas, financeiro, metas e muito mais — tudo na nuvem e no celular.',
+    valor:'49', modo:'hotmart', url:'https://go.hotmart.com/I107233374R?dp=1', contato:'', img:'' },
+  { nome:'CashOn — Controle Financeiro Inteligente',
+    desc:'App de controle financeiro pessoal: organize entradas, saídas e metas de forma simples e inteligente. Acesso na nuvem, em qualquer dispositivo.',
+    valor:'49', modo:'hotmart', url:'https://pay.hotmart.com/N106973465U?off=4qxk1fpl', contato:'', img:'' },
+  { nome:'RMHacking — Investigação Digital',
+    desc:'Sistema profissional de investigação digital: dossiês de empresa e pessoa, OSINT, evidências com hash, linha do tempo, mapa mental, grafo de entidades, cadeia de custódia e relatórios automáticos.',
+    valor:'', modo:'hotmart', url:'https://go.hotmart.com/E106867430A?dp=1', contato:'', img:'' },
+  { nome:'Sistema de Arbitragem — Fisiculturismo',
+    desc:'O primeiro sistema digital de arbitragem para competições de fisiculturismo. Árbitros votam pelo celular em tempo real, com apuração automática e transparente.',
+    valor:'', modo:'manual', url:'', contato:'', img:'' },
+];
+function vitCarregarModelos(){
+  const novos = VITRINE_SEED.map(p=>({id:uid(), ...p}));
+  store.meusProdutos = (store.meusProdutos||[]).concat(novos);
+  persist('meusProdutos'); RENDER.vitrine();
+  toast('Produtos pré-cadastrados! Complete os links de compra que faltam.');
+}
 RENDER.vitrine = () => {
   const v=document.getElementById('view');
   const lista=store.meusProdutos||[];
@@ -1933,6 +1955,10 @@ RENDER.vitrine = () => {
       <p class="text-sm text-muted">Cadastre os sistemas/produtos que você vende. Depois é só clicar para copiar o link ou uma mensagem pronta e colar no WhatsApp, Instagram, onde quiser.</p>
       <button onclick="vitForm()" class="shrink-0 px-4 py-2 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">+ Novo produto</button>
     </div>
+    ${!lista.length? `<div class="bg-accent/10 border border-accent/30 rounded-lg px-4 py-3 text-sm flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
+      <span class="text-muted">Quer começar rápido? Posso pré-cadastrar seus produtos (AssistenteOn, CashOn, Investigação Digital, Arbitragem).</span>
+      <button onclick="vitCarregarModelos()" class="shrink-0 px-3 py-1.5 rounded-lg bg-accent/20 text-accent border border-accent/30 text-xs hover:bg-accent/30">Pré-cadastrar meus produtos</button>
+    </div>`:''}
     ${lista.length? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">`+lista.map(p=>{
       const img=p.img
         ? `<img src="${p.img}" class="w-full h-32 object-cover rounded-lg mb-3">`
@@ -1951,12 +1977,14 @@ RENDER.vitrine = () => {
         </div>
         ${p.desc? `<div class="text-xs text-muted mt-1 line-clamp-3">${esc(p.desc)}</div>`:''}
         <div class="mt-auto pt-3 grid grid-cols-2 gap-2">
-          <button onclick="vitCopiarLink('${p.id}')" class="px-2 py-2 rounded-lg bg-ink border border-edge text-xs hover:bg-edge/40 flex items-center justify-center gap-1" title="Copiar só o link">🔗 Copiar link</button>
+          <button onclick="vitCopiarLink('${p.id}')" class="px-2 py-2 rounded-lg bg-ink border border-edge text-xs hover:bg-edge/40 flex items-center justify-center gap-1" title="${p.modo==='manual'?'Copiar contato de liberação':'Copiar só o link'}">${p.modo==='manual'?'💬 Copiar contato':'🔗 Copiar link'}</button>
           <button onclick="vitCopiarMsg('${p.id}')" class="px-2 py-2 rounded-lg bg-accent/15 text-accent border border-accent/30 text-xs hover:bg-accent/25 flex items-center justify-center gap-1" title="Copiar mensagem pronta">📋 Copiar msg</button>
         </div>
-        ${p.url? `<a href="${esc(p.url)}" target="_blank" class="mt-2 text-[11px] text-muted hover:text-accent truncate block" title="${esc(p.url)}">${esc(p.url)}</a>`:'<div class="mt-2 text-[11px] text-amber-300/80">⚠ Sem link de compra</div>'}
+        ${p.modo==='manual'
+          ? `<div class="mt-2 text-[11px] text-accent/90">🔓 Liberado direto no sistema${p.contato?` · ${esc(p.contato)}`:''}</div>`
+          : (p.url? `<a href="${esc(p.url)}" target="_blank" class="mt-2 text-[11px] text-muted hover:text-accent truncate block" title="${esc(p.url)}">${esc(p.url)}</a>`:'<div class="mt-2 text-[11px] text-amber-300/80">⚠ Sem link de compra</div>')}
       </div>`;
-    }).join('')+`</div>` : card(emptyState('Nenhum produto cadastrado. Clique em "+ Novo produto" para começar sua vitrine de divulgação.'))}
+    }).join('')+`</div>` : card(emptyState('Nenhum produto cadastrado ainda.'))}
   </div>`;
 };
 function vitMensagem(p){
@@ -1964,11 +1992,23 @@ function vitMensagem(p){
   let m = `✨ ${p.nome||''}`.trim();
   if(p.desc) m += `\n\n${p.desc}`;
   if(p.valor!==''&&p.valor!=null) m += `\n\n💰 ${fmtBRL(p.valor)}`;
-  if(p.url) m += `\n\n👉 Garanta o seu: ${p.url}`;
+  if(p.modo==='manual'){
+    if(p.contato) m += `\n\n👉 Para liberar seu acesso, fale comigo: ${p.contato}`;
+    else m += `\n\n👉 Me chame para liberar seu acesso!`;
+  } else if(p.url){
+    m += `\n\n👉 Garanta o seu: ${p.url}`;
+  }
   return m;
 }
 function vitCopiarLink(id){
   const p=(store.meusProdutos||[]).find(x=>x.id===id); if(!p) return;
+  if(p.modo==='manual'){
+    if(!p.contato){ toast('Este produto não tem contato de liberação. Edite e informe seu WhatsApp/contato.'); return; }
+    navigator.clipboard?.writeText(p.contato).then(
+      ()=>toast('Contato copiado!'),
+      ()=>toast('Não foi possível copiar.'));
+    return;
+  }
   if(!p.url){ toast('Este produto não tem link de compra.'); return; }
   navigator.clipboard?.writeText(p.url).then(
     ()=>toast('Link copiado! Cole onde quiser.'),
@@ -1981,7 +2021,8 @@ function vitCopiarMsg(id){
     ()=>toast('Não foi possível copiar.'));
 }
 function vitForm(id){
-  const p=id? store.meusProdutos.find(x=>x.id===id) : {nome:'',desc:'',valor:'',url:'',img:''};
+  const p=id? store.meusProdutos.find(x=>x.id===id) : {nome:'',desc:'',valor:'',url:'',img:'',modo:'hotmart',contato:''};
+  const modo = p.modo||'hotmart';
   window.__vitImg = p.img||'';
   openModal(id?'Editar produto':'Novo produto',`
     <div class="flex items-center gap-3 mb-3">
@@ -1998,12 +2039,28 @@ function vitForm(id){
     </div>
     ${field('Nome do produto','vit_nome',p.nome)}
     ${areaField('Descrição (o que é, para quem, benefícios)','vit_desc',p.desc)}
+    <label class="block mb-3"><span class="text-xs text-muted mb-1 block">Como o cliente compra?</span>
+      <select id="vit_modo" onchange="vitToggleModo()" class="w-full bg-ink border border-edge rounded-lg px-3 py-2 text-sm">
+        <option value="hotmart" ${modo==='hotmart'?'selected':''}>Hotmart (link de compra)</option>
+        <option value="manual" ${modo==='manual'?'selected':''}>Liberação manual (eu libero pelo sistema)</option>
+      </select>
+    </label>
     <div class="grid grid-cols-2 gap-3">
       ${field('Valor (R$)','vit_valor',p.valor,'number','step="0.01"')}
-      ${field('Link de compra (Hotmart)','vit_url',p.url,'text','placeholder="https://pay.hotmart.com/..."')}
+      <div id="vit_urlWrap" class="${modo==='manual'?'hidden':''}">
+        ${field('Link de compra (Hotmart)','vit_url',p.url,'text','placeholder="https://go.hotmart.com/..."')}
+      </div>
+      <div id="vit_contatoWrap" class="${modo==='manual'?'':'hidden'}">
+        ${field('Seu contato (WhatsApp, @insta, e-mail)','vit_contato',p.contato,'text','placeholder="wa.me/55... ou @seuinsta"')}
+      </div>
     </div>
     ${btnRow('Salvar',`vitSave('${id||''}')`)}
   `);
+}
+function vitToggleModo(){
+  const manual = document.getElementById('vit_modo').value==='manual';
+  document.getElementById('vit_urlWrap').classList.toggle('hidden', manual);
+  document.getElementById('vit_contatoWrap').classList.toggle('hidden', !manual);
 }
 function vitCarregarImg(ev){
   const f=ev.target.files[0]; if(!f) return;
@@ -2015,7 +2072,11 @@ function vitCarregarImg(ev){
 function vitRemoverImg(){ window.__vitImg=''; document.getElementById('vit_imgPrev').innerHTML='🛍'; }
 function vitSave(id){
   const nome=val('vit_nome'); if(!nome){ toast('Informe o nome do produto.'); return; }
-  const data={nome, desc:val('vit_desc'), valor:val('vit_valor'), url:val('vit_url'), img:window.__vitImg||''};
+  const modo=document.getElementById('vit_modo')?.value||'hotmart';
+  const data={nome, desc:val('vit_desc'), valor:val('vit_valor'), modo,
+              url: modo==='manual'?'':val('vit_url'),
+              contato: modo==='manual'?val('vit_contato'):'',
+              img:window.__vitImg||''};
   if(id){ Object.assign(store.meusProdutos.find(x=>x.id===id),data); }
   else{ store.meusProdutos.push({id:uid(), ...data}); }
   persist('meusProdutos'); closeModal(); RENDER.vitrine(); toast('Produto salvo.');
