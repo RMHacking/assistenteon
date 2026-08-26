@@ -469,6 +469,7 @@ function novoStore(){
   despesas: DB.load('despesas', []),            // [{id, desc, valor, data, categoria}]
   metas:    DB.load('metas', {}),               // { '2026-08': {valor: 5000} }
   orcamentos: DB.load('orcamentos', []),        // [{id, numero, clienteId, clienteNome, data, validade, itens:[{desc,qtd,valor}], obs, condicoes, status}]
+  meusProdutos: DB.load('meusProdutos', []),    // vitrine p/ divulgar (Hotmart): [{id, nome, desc, valor, url, img}]
   config:   DB.load('config', {                 // configuração fiscal do usuário
     regime: 'MEI',                              // MEI | ME
     atividade: 'Serviços',                      // Comércio/Indústria | Serviços | Comércio e Serviços
@@ -649,6 +650,7 @@ const PAGES = [
   {id:'pessoal',   label:'Cadastro Pessoal', icon:'⬢', grupo:'Organização'},
   // Config
   {id:'negocio',   label:'Meu Negócio', icon:'✦', grupo:'Configurações'},
+  {id:'vitrine',   label:'Meus Produtos', icon:'🛍', grupo:'Configurações'},
   {id:'admin',     label:'Administração', icon:'★', adminOnly:true, grupo:'Configurações'},
 ];
 let current='dashboard';
@@ -1920,6 +1922,108 @@ function saveProd(id){
   persist('produtos'); closeModal(); RENDER.produtos(); toast('Item salvo.');
 }
 function delProd(id){ store.produtos=store.produtos.filter(x=>x.id!==id); persist('produtos'); RENDER.produtos(); }
+
+/* ============ MEUS PRODUTOS (VITRINE P/ DIVULGAÇÃO — HOTMART) ============ */
+RENDER.vitrine = () => {
+  const v=document.getElementById('view');
+  const lista=store.meusProdutos||[];
+  v.innerHTML=`
+  <div class="fade space-y-4">
+    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+      <p class="text-sm text-muted">Cadastre os sistemas/produtos que você vende. Depois é só clicar para copiar o link ou uma mensagem pronta e colar no WhatsApp, Instagram, onde quiser.</p>
+      <button onclick="vitForm()" class="shrink-0 px-4 py-2 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">+ Novo produto</button>
+    </div>
+    ${lista.length? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">`+lista.map(p=>{
+      const img=p.img
+        ? `<img src="${p.img}" class="w-full h-32 object-cover rounded-lg mb-3">`
+        : `<div class="w-full h-32 rounded-lg mb-3 grid place-items-center bg-ink border border-edge text-3xl text-muted/50">🛍</div>`;
+      return `<div class="bg-panel border border-edge rounded-xl p-4 flex flex-col">
+        ${img}
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-medium truncate">${esc(p.nome||'(sem nome)')}</div>
+            ${p.valor!==''&&p.valor!=null? `<div class="text-accent font-semibold mt-0.5">${fmtBRL(p.valor)}</div>`:''}
+          </div>
+          <div class="flex gap-1 shrink-0">
+            <button onclick="vitForm('${p.id}')" class="text-muted text-xs p-1" title="Editar">✎</button>
+            <button onclick="vitDel('${p.id}')" class="text-red-400 text-xs p-1" title="Excluir">✕</button>
+          </div>
+        </div>
+        ${p.desc? `<div class="text-xs text-muted mt-1 line-clamp-3">${esc(p.desc)}</div>`:''}
+        <div class="mt-auto pt-3 grid grid-cols-2 gap-2">
+          <button onclick="vitCopiarLink('${p.id}')" class="px-2 py-2 rounded-lg bg-ink border border-edge text-xs hover:bg-edge/40 flex items-center justify-center gap-1" title="Copiar só o link">🔗 Copiar link</button>
+          <button onclick="vitCopiarMsg('${p.id}')" class="px-2 py-2 rounded-lg bg-accent/15 text-accent border border-accent/30 text-xs hover:bg-accent/25 flex items-center justify-center gap-1" title="Copiar mensagem pronta">📋 Copiar msg</button>
+        </div>
+        ${p.url? `<a href="${esc(p.url)}" target="_blank" class="mt-2 text-[11px] text-muted hover:text-accent truncate block" title="${esc(p.url)}">${esc(p.url)}</a>`:'<div class="mt-2 text-[11px] text-amber-300/80">⚠ Sem link de compra</div>'}
+      </div>`;
+    }).join('')+`</div>` : card(emptyState('Nenhum produto cadastrado. Clique em "+ Novo produto" para começar sua vitrine de divulgação.'))}
+  </div>`;
+};
+function vitMensagem(p){
+  // monta a mensagem pronta de divulgação
+  let m = `✨ ${p.nome||''}`.trim();
+  if(p.desc) m += `\n\n${p.desc}`;
+  if(p.valor!==''&&p.valor!=null) m += `\n\n💰 ${fmtBRL(p.valor)}`;
+  if(p.url) m += `\n\n👉 Garanta o seu: ${p.url}`;
+  return m;
+}
+function vitCopiarLink(id){
+  const p=(store.meusProdutos||[]).find(x=>x.id===id); if(!p) return;
+  if(!p.url){ toast('Este produto não tem link de compra.'); return; }
+  navigator.clipboard?.writeText(p.url).then(
+    ()=>toast('Link copiado! Cole onde quiser.'),
+    ()=>toast('Não foi possível copiar.'));
+}
+function vitCopiarMsg(id){
+  const p=(store.meusProdutos||[]).find(x=>x.id===id); if(!p) return;
+  navigator.clipboard?.writeText(vitMensagem(p)).then(
+    ()=>toast('Mensagem copiada! Cole no WhatsApp, Instagram, etc.'),
+    ()=>toast('Não foi possível copiar.'));
+}
+function vitForm(id){
+  const p=id? store.meusProdutos.find(x=>x.id===id) : {nome:'',desc:'',valor:'',url:'',img:''};
+  window.__vitImg = p.img||'';
+  openModal(id?'Editar produto':'Novo produto',`
+    <div class="flex items-center gap-3 mb-3">
+      <div id="vit_imgPrev" class="w-16 h-16 rounded-lg overflow-hidden bg-ink border border-edge grid place-items-center text-2xl text-muted/50 shrink-0">
+        ${p.img? `<img src="${p.img}" class="w-full h-full object-cover">` : '🛍'}
+      </div>
+      <div class="flex flex-col gap-1">
+        <label class="px-3 py-1.5 rounded-lg bg-ink border border-edge text-xs hover:bg-edge/40 cursor-pointer inline-block">
+          Escolher imagem/logo
+          <input type="file" accept="image/*" class="hidden" onchange="vitCarregarImg(event)">
+        </label>
+        <button type="button" onclick="vitRemoverImg()" class="text-[11px] text-red-400 hover:underline text-left">Remover imagem</button>
+      </div>
+    </div>
+    ${field('Nome do produto','vit_nome',p.nome)}
+    ${areaField('Descrição (o que é, para quem, benefícios)','vit_desc',p.desc)}
+    <div class="grid grid-cols-2 gap-3">
+      ${field('Valor (R$)','vit_valor',p.valor,'number','step="0.01"')}
+      ${field('Link de compra (Hotmart)','vit_url',p.url,'text','placeholder="https://pay.hotmart.com/..."')}
+    </div>
+    ${btnRow('Salvar',`vitSave('${id||''}')`)}
+  `);
+}
+function vitCarregarImg(ev){
+  const f=ev.target.files[0]; if(!f) return;
+  if(f.size>2*1024*1024){ toast('Imagem muito grande (máx. 2MB).'); return; }
+  const r=new FileReader();
+  r.onload=e=>{ window.__vitImg=e.target.result; document.getElementById('vit_imgPrev').innerHTML=`<img src="${e.target.result}" class="w-full h-full object-cover">`; };
+  r.readAsDataURL(f); ev.target.value='';
+}
+function vitRemoverImg(){ window.__vitImg=''; document.getElementById('vit_imgPrev').innerHTML='🛍'; }
+function vitSave(id){
+  const nome=val('vit_nome'); if(!nome){ toast('Informe o nome do produto.'); return; }
+  const data={nome, desc:val('vit_desc'), valor:val('vit_valor'), url:val('vit_url'), img:window.__vitImg||''};
+  if(id){ Object.assign(store.meusProdutos.find(x=>x.id===id),data); }
+  else{ store.meusProdutos.push({id:uid(), ...data}); }
+  persist('meusProdutos'); closeModal(); RENDER.vitrine(); toast('Produto salvo.');
+}
+async function vitDel(id){
+  if(!(await confirmar('Excluir produto','Excluir este produto da sua vitrine?',{okTxt:'Excluir',perigo:true}))) return;
+  store.meusProdutos=store.meusProdutos.filter(x=>x.id!==id); persist('meusProdutos'); RENDER.vitrine();
+}
 
 /* ============ VENDAS ============ */
 function vendaTotalMes(ano,mes){ return store.vendas.filter(x=>{const d=new Date(x.data+'T00:00:00'); return d.getFullYear()===ano&&d.getMonth()===mes;}).reduce((s,x)=>s+(Number(x.valor)||0),0); }
