@@ -640,9 +640,11 @@ const PAGES = [
   {id:'vendas',    label:'Vendas', icon:'◆', grupo:'Dinheiro'},
   {id:'financeiro',label:'Financeiro & Metas', icon:'◉', grupo:'Dinheiro'},
   {id:'relatorios',label:'Relatórios', icon:'▩', grupo:'Dinheiro'},
+  {id:'indicadores',label:'Indicadores', icon:'◎', grupo:'Dinheiro'},
   // Clientes & Vendas
   {id:'clients',   label:'Clientes & Serviços', icon:'◫', grupo:'Clientes'},
   {id:'produtos',  label:'Produtos & Serviços', icon:'⬒', grupo:'Clientes'},
+  {id:'estoque',   label:'Estoque', icon:'▤', grupo:'Clientes'},
   {id:'leads',     label:'Funil de Leads', icon:'◇', grupo:'Clientes'},
   {id:'colaboradores', label:'Colaboradores', icon:'◍', grupo:'Clientes'},
   {id:'ferramentas',label:'Ferramentas', icon:'⚒', grupo:'Clientes'},
@@ -1892,6 +1894,14 @@ function prodForm(id){
       ${selectField('Tipo','pr_tipo',p.tipo||'Produto',['Produto','Serviço'])}
     </div>
     <div class="border-t border-edge pt-3 mt-1">
+      <span class="text-xs text-muted block mb-2">Controle de estoque <span class="opacity-70">(deixe em branco para serviços ou itens sem controle)</span></span>
+      <div class="grid grid-cols-3 gap-3">
+        ${field('Qtd. em estoque','pr_qtd',p.qtd??'','number','step="1"')}
+        ${field('Custo unit. (R$)','pr_custo',p.custo??'','number','step="0.01"')}
+        ${field('Estoque mínimo','pr_min',p.estoqueMin??'','number','step="1"')}
+      </div>
+    </div>
+    <div class="border-t border-edge pt-3 mt-1">
       <div class="flex items-center justify-between mb-1">
         <span class="text-xs text-muted">Opções / variações <span class="opacity-70">(ex: tamanho, versão, acabamento)</span></span>
         <button type="button" onclick="prodAddOpc()" class="text-xs text-accent hover:underline">+ Opção</button>
@@ -1923,12 +1933,160 @@ function prodDelOpc(i){
 function saveProd(id){
   const nome=val('pr_nome'); if(!nome){ toast('Informe o nome.'); return; }
   const opcoes=(window.__prod.opcoes||[]).filter(o=>(o.nome||'').trim()||o.preco!=='');
-  const data={nome, preco:val('pr_preco'), tipo:val('pr_tipo'), opcoes};
+  const numOuVazio = s => s===''? '' : (Number(s));
+  const data={nome, preco:val('pr_preco'), tipo:val('pr_tipo'), opcoes,
+    qtd: numOuVazio(val('pr_qtd')),
+    custo: numOuVazio(val('pr_custo')),
+    estoqueMin: numOuVazio(val('pr_min'))};
   if(id){ Object.assign(store.produtos.find(x=>x.id===id),data); }
   else{ store.produtos.push({id:uid(), ...data}); }
-  persist('produtos'); closeModal(); RENDER.produtos(); toast('Item salvo.');
+  persist('produtos'); closeModal(); RENDER.produtos(); if(current==='estoque')RENDER.estoque(); toast('Item salvo.');
 }
-function delProd(id){ store.produtos=store.produtos.filter(x=>x.id!==id); persist('produtos'); RENDER.produtos(); }
+function delProd(id){ store.produtos=store.produtos.filter(x=>x.id!==id); persist('produtos'); RENDER.produtos(); if(current==='estoque')RENDER.estoque(); }
+
+/* ============ ESTOQUE (usa store.produtos que têm controle de estoque) ============ */
+// Considera "com estoque" todo produto cujo campo qtd não está vazio.
+function temEstoque(p){ return p.qtd!=='' && p.qtd!=null; }
+function estoqueStatus(p){
+  const q=Number(p.qtd)||0, min=Number(p.estoqueMin)||0;
+  if(q<=0) return {txt:'Esgotado', cls:'bg-red-500/15 text-red-400'};
+  if(min>0 && q<=min) return {txt:'Baixo', cls:'bg-amber-500/15 text-amber-400'};
+  return {txt:'OK', cls:'bg-green-500/15 text-green-400'};
+}
+RENDER.estoque = () => {
+  const v=document.getElementById('view');
+  const itens=store.produtos.filter(temEstoque);
+  const totalCusto=itens.reduce((s,p)=>s+(Number(p.qtd)||0)*(Number(p.custo)||0),0);
+  const totalVenda=itens.reduce((s,p)=>s+(Number(p.qtd)||0)*(Number(p.preco)||0),0);
+  const alertas=itens.filter(p=>estoqueStatus(p).txt!=='OK');
+  const unidades=itens.reduce((s,p)=>s+(Number(p.qtd)||0),0);
+  v.innerHTML=`
+  <div class="fade space-y-4">
+    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+      <p class="text-sm text-muted">Controle de estoque dos seus produtos. Para incluir um produto aqui, preencha a quantidade no cadastro em <button onclick="go('produtos')" class="text-accent hover:underline">Produtos &amp; Serviços</button>.</p>
+      <button onclick="go('produtos')" class="shrink-0 px-4 py-2 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">+ Novo produto</button>
+    </div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      ${card(`<div class="text-[10px] uppercase tracking-wider text-muted/70 font-medium">Itens em estoque</div><div class="stat-hero text-2xl mt-1.5">${itens.length}</div><div class="text-xs text-muted mt-1">${unidades} unidade(s)</div>`)}
+      ${card(`<div class="text-[10px] uppercase tracking-wider text-muted/70 font-medium">Valor em custo</div><div class="stat-hero text-2xl mt-1.5">${fmtBRL(totalCusto)}</div><div class="text-xs text-muted mt-1">o que você investiu</div>`)}
+      ${card(`<div class="text-[10px] uppercase tracking-wider text-muted/70 font-medium">Valor em venda</div><div class="stat-hero text-2xl mt-1.5">${fmtBRL(totalVenda)}</div><div class="text-xs text-muted mt-1">se vender tudo</div>`)}
+      ${card(`<div class="text-[10px] uppercase tracking-wider text-muted/70 font-medium">Alertas</div><div class="stat-hero text-2xl mt-1.5 ${alertas.length?'text-amber-400':''}">${alertas.length}</div><div class="text-xs text-muted mt-1">baixo ou esgotado</div>`)}
+    </div>
+    ${itens.length? `<div class="bg-panel border border-edge rounded-xl overflow-hidden">
+      <div class="grid grid-cols-[1fr_auto_auto_auto] sm:grid-cols-[1fr_100px_120px_140px] gap-2 px-4 py-2 text-[11px] uppercase tracking-wider text-muted/70 border-b border-edge">
+        <span>Produto</span><span class="text-center">Qtd</span><span class="text-right hidden sm:block">Valor (custo)</span><span class="text-right">Ações</span>
+      </div>
+      ${itens.map(p=>{
+        const st=estoqueStatus(p); const q=Number(p.qtd)||0;
+        return `<div class="grid grid-cols-[1fr_auto_auto_auto] sm:grid-cols-[1fr_100px_120px_140px] gap-2 px-4 py-3 items-center border-b border-edge/40 last:border-0">
+          <div class="min-w-0">
+            <div class="font-medium truncate">${esc(p.nome)}</div>
+            <span class="inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${st.cls}">${st.txt}</span>
+            ${Number(p.estoqueMin)>0?`<span class="text-[10px] text-muted ml-1">mín: ${p.estoqueMin}</span>`:''}
+          </div>
+          <div class="text-center font-semibold tabular-nums ${q<=0?'text-red-400':''}">${q}</div>
+          <div class="text-right text-sm text-muted tabular-nums hidden sm:block">${fmtBRL(q*(Number(p.custo)||0))}</div>
+          <div class="flex gap-1 justify-end">
+            <button onclick="estoqueMov('${p.id}','saida')" class="w-7 h-7 rounded-lg bg-ink border border-edge hover:bg-edge/40 text-sm" title="Dar saída">−</button>
+            <button onclick="estoqueMov('${p.id}','entrada')" class="w-7 h-7 rounded-lg bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 text-sm" title="Dar entrada">+</button>
+            <button onclick="prodForm('${p.id}')" class="w-7 h-7 rounded-lg bg-ink border border-edge hover:bg-edge/40 text-xs" title="Editar produto">✎</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : card(emptyState('Nenhum produto com estoque ainda. Vá em Produtos & Serviços e preencha a quantidade de um produto.'))}
+  </div>`;
+};
+function estoqueMov(id, tipo){
+  const p=store.produtos.find(x=>x.id===id); if(!p) return;
+  const acao = tipo==='entrada'?'Entrada (adicionar ao estoque)':'Saída (remover do estoque)';
+  openModal(acao,`
+    <p class="text-sm text-muted mb-3">${esc(p.nome)} — em estoque: <strong>${Number(p.qtd)||0}</strong></p>
+    ${field('Quantidade','em_qtd','','number','min="1" step="1"')}
+    ${field('Observação (opcional)','em_obs','')}
+    ${btnRow('Confirmar',`estoqueMovConfirmar('${id}','${tipo}')`)}
+  `);
+  setTimeout(()=>{ const el=document.getElementById('em_qtd'); if(el) el.focus(); },50);
+}
+async function estoqueMovConfirmar(id, tipo){
+  const p=store.produtos.find(x=>x.id===id); if(!p) return;
+  const q=parseInt(val('em_qtd'),10);
+  if(!q || q<=0){ toast('Informe uma quantidade válida.'); return; }
+  const atual=Number(p.qtd)||0;
+  p.qtd = tipo==='entrada' ? atual+q : atual-q;
+  closeModal(); RENDER.estoque();
+  await persistAgora('produtos');
+  if(p.qtd<0) toast('Atenção: estoque de "'+p.nome+'" ficou negativo ('+p.qtd+').');
+  else toast(tipo==='entrada'?'Entrada registrada.':'Saída registrada.');
+}
+
+/* ============ INDICADORES FINANCEIROS (aproveita dados já existentes) ============ */
+let indMes = todayStr().slice(0,7); // 'AAAA-MM'
+function mesAnterior(ym){ const [a,m]=ym.split('-').map(Number); const d=new Date(a, m-2, 1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function nomeMes(ym){ const [a,m]=ym.split('-').map(Number); return new Date(a,m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'}); }
+function vendasDoMes(ym){ return store.vendas.filter(v=>(v.data||'').slice(0,7)===ym); }
+RENDER.indicadores = () => {
+  const v=document.getElementById('view');
+  const ym=indMes, ymAnt=mesAnterior(ym);
+  const vMes=vendasDoMes(ym), vAnt=vendasDoMes(ymAnt);
+  const fat=vMes.reduce((s,x)=>s+(Number(x.valor)||0),0);
+  const fatAnt=vAnt.reduce((s,x)=>s+(Number(x.valor)||0),0);
+  const desp=(store.despesas||[]).filter(d=>(d.data||'').slice(0,7)===ym).reduce((s,d)=>s+(Number(d.valor)||0),0);
+  const lucro=fat-desp;
+  const margem = fat>0 ? (lucro/fat*100) : 0;
+  const nVendas=vMes.length;
+  const ticket = nVendas>0 ? fat/nVendas : 0;
+  const meta = store.metas[ym]?.valor||0;
+  const metaPct = meta>0 ? Math.min(100, fat/meta*100) : 0;
+  // a receber / inadimplência
+  const cobr = (typeof coletarCobrancas==='function') ? coletarCobrancas() : [];
+  const hoje=todayStr();
+  const aReceber = cobr.reduce((s,x)=>s+(Number(x.valor)||0),0);
+  const vencido = cobr.filter(x=>x.venc && x.venc<hoje).reduce((s,x)=>s+(Number(x.valor)||0),0);
+  // estoque
+  const itensEst=store.produtos.filter(temEstoque);
+  const estCusto=itensEst.reduce((s,p)=>s+(Number(p.qtd)||0)*(Number(p.custo)||0),0);
+  // capital de giro estimado (simplificado): a receber + estoque a custo
+  const giro = aReceber + estCusto;
+  // variação de faturamento
+  const varFat = fatAnt>0 ? ((fat-fatAnt)/fatAnt*100) : (fat>0?100:0);
+  const setinha = varFat>0?'▲':(varFat<0?'▼':'–');
+  const corVar = varFat>0?'text-green-400':(varFat<0?'text-red-400':'text-muted');
+
+  const bloco=(titulo, valor, sub, extra='')=>card(`<div class="text-[10px] uppercase tracking-wider text-muted/70 font-medium">${titulo}</div><div class="stat-hero text-2xl mt-1.5 ${extra}">${valor}</div><div class="text-xs text-muted mt-1">${sub}</div>`);
+
+  v.innerHTML=`
+  <div class="fade space-y-4">
+    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+      <p class="text-sm text-muted">Visão geral da saúde financeira do seu negócio, a partir dos dados que você já registra.</p>
+      <input type="month" value="${ym}" onchange="indMes=this.value; RENDER.indicadores();" class="bg-ink border border-edge rounded-lg px-3 py-2 text-sm">
+    </div>
+
+    <div class="text-xs uppercase tracking-wider text-muted/70 font-medium pt-1">Resultado — ${nomeMes(ym)}</div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      ${bloco('Faturamento', fmtBRL(fat), `<span class="${corVar}">${setinha} ${Math.abs(varFat).toFixed(0)}%</span> vs. mês anterior`)}
+      ${bloco('Despesas', fmtBRL(desp), desp>0?'saídas no mês':'nenhuma despesa lançada')}
+      ${bloco('Lucro', fmtBRL(lucro), `margem de ${margem.toFixed(0)}%`, lucro>=0?'text-green-400':'text-red-400')}
+      ${bloco('Ticket médio', fmtBRL(ticket), `${nVendas} venda(s) no mês`)}
+    </div>
+
+    ${meta>0? `<div class="bg-panel border border-edge rounded-xl p-4">
+      <div class="flex justify-between text-sm mb-2"><span class="text-muted">Meta do mês</span><span class="font-semibold">${fmtBRL(fat)} / ${fmtBRL(meta)}</span></div>
+      <div class="h-2.5 bg-ink rounded-full overflow-hidden"><div class="h-full bg-accent rounded-full transition-all" style="width:${metaPct}%"></div></div>
+      <div class="text-xs text-muted mt-1.5">${metaPct.toFixed(0)}% da meta atingido${fat>=meta?' 🎉':''}</div>
+    </div>`:''}
+
+    <div class="text-xs uppercase tracking-wider text-muted/70 font-medium pt-1">Fôlego de caixa <span class="normal-case opacity-70">(situação atual, não só do mês)</span></div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      ${bloco('A receber', fmtBRL(aReceber), 'cobranças em aberto')}
+      ${bloco('Vencido', fmtBRL(vencido), 'inadimplência', vencido>0?'text-red-400':'')}
+      ${bloco('Estoque (custo)', fmtBRL(estCusto), `${itensEst.length} produto(s)`)}
+      ${bloco('Capital de giro', fmtBRL(giro), 'a receber + estoque')}
+    </div>
+    <div class="bg-panel/60 border border-edge/60 rounded-xl p-4 text-xs text-muted leading-relaxed">
+      <strong class="text-muted/90">Como ler:</strong> <em>Capital de giro</em> aqui é uma estimativa simples (o que você tem a receber + o valor do seu estoque a custo) — é o recurso que sustenta o dia a dia enquanto novas vendas não entram. <em>Vencido</em> alto significa dinheiro preso com clientes: vale cobrar. <em>Margem</em> mostra quanto do faturamento vira lucro depois das despesas.
+    </div>
+  </div>`;
+};
 
 /* ============ MEUS PRODUTOS (VITRINE P/ DIVULGAÇÃO — HOTMART) ============ */
 // Modelos pré-preenchidos com os produtos do Rafael (dados do Notion).
@@ -2148,6 +2306,10 @@ function vendaForm(id){
     </select></label>`;
   openModal(id?'Editar venda':'Registrar venda',`
     ${prodOpts}
+    <div id="vd_estoqueWrap" class="hidden mb-3">
+      ${field('Quantidade vendida (baixa no estoque)','vd_qtd','1','number','min="1" step="1"')}
+      <div id="vd_estoqueInfo" class="text-[11px] text-muted mt-1"></div>
+    </div>
     ${field('Descrição','vd_desc',x.desc)}
     <div class="grid grid-cols-2 gap-3">
       ${field('Valor (R$)','vd_valor',valorCampo,'number','step="0.01" oninput="calcDescontoVenda()"')}
@@ -2192,10 +2354,21 @@ function calcDescontoVenda(){
   }
 }
 function preencherProduto(){
-  const pid=document.getElementById('vd_prod').value; if(!pid) return;
+  const pid=document.getElementById('vd_prod').value;
+  const wrap=document.getElementById('vd_estoqueWrap');
+  const info=document.getElementById('vd_estoqueInfo');
+  if(!pid){ if(wrap) wrap.classList.add('hidden'); return; }
   const p=store.produtos.find(x=>x.id===pid); if(!p) return;
   document.getElementById('vd_desc').value=p.nome;
   document.getElementById('vd_valor').value=p.preco;
+  if(typeof calcDescontoVenda==='function') calcDescontoVenda();
+  // se o produto tem controle de estoque, mostra o campo de quantidade
+  if(temEstoque(p)){
+    wrap.classList.remove('hidden');
+    info.textContent='Em estoque: '+(Number(p.qtd)||0)+' unidade(s). A venda dará baixa automática.';
+  } else {
+    wrap.classList.add('hidden');
+  }
 }
 function saveVenda(id){
   const desc=val('vd_desc'); if(!desc){ toast('Descreva a venda.'); return; }
@@ -2204,11 +2377,37 @@ function saveVenda(id){
   const valorFinal=valorBruto - (valorBruto*descPct/100);
   const data={desc, valor:valorFinal, valorBruto:valorBruto, descontoPct:descPct, data:val('vd_data'), clienteId:document.getElementById('vd_cli').value, comissaoPct:val('vd_com'),
     pgto:val('vd_pgto'), dpag:val('vd_dpag'), parcelas:val('vd_parcelas')};
+  // baixa de estoque: só em venda NOVA vinculada a um produto com controle
+  let baixaMsg='';
+  const selProd=document.getElementById('vd_prod');
+  const pid = selProd? selProd.value : '';
+  if(!id && pid){
+    const p=store.produtos.find(x=>x.id===pid);
+    if(p && temEstoque(p)){
+      const q=parseInt(val('vd_qtd'),10)||0;
+      if(q>0){
+        data.produtoId=pid; data.qtdVendida=q;   // guarda para poder devolver se excluir
+        p.qtd=(Number(p.qtd)||0)-q;
+        persist('produtos');
+        baixaMsg = p.qtd<0 ? ' Estoque de "'+p.nome+'" ficou negativo ('+p.qtd+').' : ' Baixa de '+q+' no estoque.';
+      }
+    }
+  }
   if(id){ Object.assign(store.vendas.find(v=>v.id===id),data); }
   else{ store.vendas.push({id:uid(), ...data}); }
-  persist('vendas'); closeModal(); RENDER.vendas(); toast(descPct>0?'Venda registrada com '+descPct+'% de desconto.':'Venda registrada.');
+  persist('vendas'); closeModal(); RENDER.vendas();
+  toast((descPct>0?'Venda registrada com '+descPct+'% de desconto.':'Venda registrada.')+baixaMsg);
 }
-function delVenda(id){ store.vendas=store.vendas.filter(v=>v.id!==id); persist('vendas'); RENDER.vendas(); }
+function delVenda(id){
+  const vd=store.vendas.find(v=>v.id===id);
+  // devolve ao estoque se a venda tinha dado baixa
+  if(vd && vd.produtoId && vd.qtdVendida){
+    const p=store.produtos.find(x=>x.id===vd.produtoId);
+    if(p && temEstoque(p)){ p.qtd=(Number(p.qtd)||0)+Number(vd.qtdVendida); persist('produtos'); }
+  }
+  store.vendas=store.vendas.filter(v=>v.id!==id); persist('vendas'); RENDER.vendas();
+  if(current==='estoque')RENDER.estoque();
+}
 
 /* ============ FINANCEIRO & METAS ============ */
 const CAT_DESPESA = ['Material/Estoque','Transporte/Combustível','Taxa de cartão','Embalagem','Ferramentas/Equipamento','Aluguel/Contas','Marketing','Alimentação','Impostos','Retirada pessoal','Outros'];
