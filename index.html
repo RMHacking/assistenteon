@@ -439,6 +439,13 @@ const DB = {
 };
 function persist(k){ DB.save(k, store[k]); }
 
+// grava a chave e força o envio imediato à nuvem (sem esperar o debounce de 800ms).
+// Use para ações importantes e pouco frequentes, onde perder o dado seria grave.
+async function persistAgora(k){
+  DB.save(k, store[k]);
+  try{ await flushFirebase(); }catch(e){ console.error('[AssistenteOn] persistAgora', k, e); }
+}
+
 // grava o que estiver pendente antes de fechar/atualizar a página (segurança)
 window.addEventListener('beforeunload', ()=>{ try{ flushFirebase(); }catch(e){} });
 
@@ -650,7 +657,7 @@ const PAGES = [
   {id:'pessoal',   label:'Cadastro Pessoal', icon:'⬢', grupo:'Organização'},
   // Config
   {id:'negocio',   label:'Meu Negócio', icon:'✦', grupo:'Configurações'},
-  {id:'vitrine',   label:'Meus Produtos', icon:'🛍', grupo:'Configurações'},
+  {id:'vitrine',   label:'Meus Produtos', icon:'🛍', adminOnly:true, grupo:'Configurações'},
   {id:'admin',     label:'Administração', icon:'★', adminOnly:true, grupo:'Configurações'},
 ];
 let current='dashboard';
@@ -1940,11 +1947,12 @@ const VITRINE_SEED = [
     desc:'O primeiro sistema digital de arbitragem para competições de fisiculturismo. Árbitros votam pelo celular em tempo real, com apuração automática e transparente.',
     valor:'', modo:'manual', url:'', contato:'', img:'' },
 ];
-function vitCarregarModelos(){
+async function vitCarregarModelos(){
   const novos = VITRINE_SEED.map(p=>({id:uid(), ...p}));
   store.meusProdutos = (store.meusProdutos||[]).concat(novos);
-  persist('meusProdutos'); RENDER.vitrine();
-  toast('Produtos pré-cadastrados! Complete os links de compra que faltam.');
+  RENDER.vitrine();
+  await persistAgora('meusProdutos');
+  toast('Produtos pré-cadastrados e salvos na nuvem!');
 }
 RENDER.vitrine = () => {
   const v=document.getElementById('view');
@@ -2070,7 +2078,7 @@ function vitCarregarImg(ev){
   r.readAsDataURL(f); ev.target.value='';
 }
 function vitRemoverImg(){ window.__vitImg=''; document.getElementById('vit_imgPrev').innerHTML='🛍'; }
-function vitSave(id){
+async function vitSave(id){
   const nome=val('vit_nome'); if(!nome){ toast('Informe o nome do produto.'); return; }
   const modo=document.getElementById('vit_modo')?.value||'hotmart';
   const data={nome, desc:val('vit_desc'), valor:val('vit_valor'), modo,
@@ -2079,11 +2087,12 @@ function vitSave(id){
               img:window.__vitImg||''};
   if(id){ Object.assign(store.meusProdutos.find(x=>x.id===id),data); }
   else{ store.meusProdutos.push({id:uid(), ...data}); }
-  persist('meusProdutos'); closeModal(); RENDER.vitrine(); toast('Produto salvo.');
+  closeModal(); RENDER.vitrine();
+  await persistAgora('meusProdutos'); toast('Produto salvo na nuvem.');
 }
 async function vitDel(id){
   if(!(await confirmar('Excluir produto','Excluir este produto da sua vitrine?',{okTxt:'Excluir',perigo:true}))) return;
-  store.meusProdutos=store.meusProdutos.filter(x=>x.id!==id); persist('meusProdutos'); RENDER.vitrine();
+  store.meusProdutos=store.meusProdutos.filter(x=>x.id!==id); RENDER.vitrine(); await persistAgora('meusProdutos');
 }
 
 /* ============ VENDAS ============ */
