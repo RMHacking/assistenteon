@@ -1302,13 +1302,17 @@ function calcCartao(){
     </div>`;
 }
 // soma tudo que já foi recebido (serviços pagos + parcelas pagas), opcionalmente num intervalo de datas
+// data que conta para "recebido": quando foi pago (pagoEm).
+// Se for um registro antigo sem pagoEm, cai no vencimento/data como antes.
+function dataRecebParcela(p){ return p.pagoEm || p.venc; }
+function dataRecebServico(s){ return s.pagoEm || s.data; }
 function totalRecebido(ini, fim){
   const inRange = d => (!ini && !fim) ? true : (d && (!ini || d>=ini) && (!fim || d<=fim));
   let tot=0;
   store.clients.forEach(c=>(c.servicos||[]).forEach(s=>{
     if(s.parcelas && s.parcelas.length){
-      s.parcelas.forEach(p=>{ if(p.status==='Pago' && inRange(p.venc)) tot+=Number(p.valor)||0; });
-    } else if(s.status==='Pago' && inRange(s.data)){
+      s.parcelas.forEach(p=>{ if(p.status==='Pago' && inRange(dataRecebParcela(p))) tot+=Number(p.valor)||0; });
+    } else if(s.status==='Pago' && inRange(dataRecebServico(s))){
       tot+=Number(s.valor)||0;
     }
   }));
@@ -1320,9 +1324,9 @@ function listarRecebimentos(ini, fim){
   const out=[];
   store.clients.forEach(c=>(c.servicos||[]).forEach(s=>{
     if(s.parcelas && s.parcelas.length){
-      s.parcelas.forEach((p,i)=>{ if(p.status==='Pago' && inRange(p.venc)) out.push({cliente:c.nome, desc:s.desc, valor:Number(p.valor)||0, data:p.venc, parcela:`${i+1}/${s.parcelas.length}`}); });
-    } else if(s.status==='Pago' && inRange(s.data)){
-      out.push({cliente:c.nome, desc:s.desc, valor:Number(s.valor)||0, data:s.data, parcela:''});
+      s.parcelas.forEach((p,i)=>{ if(p.status==='Pago' && inRange(dataRecebParcela(p))) out.push({cliente:c.nome, desc:s.desc, valor:Number(p.valor)||0, data:dataRecebParcela(p), parcela:`${i+1}/${s.parcelas.length}`}); });
+    } else if(s.status==='Pago' && inRange(dataRecebServico(s))){
+      out.push({cliente:c.nome, desc:s.desc, valor:Number(s.valor)||0, data:dataRecebServico(s), parcela:''});
     }
   }));
   return out.sort((a,b)=>(b.data||'').localeCompare(a.data||''));
@@ -1560,8 +1564,8 @@ function addSvc(id){
   persist('clients'); openClient(id); RENDER.clients(); if(current==='cobrancas')RENDER.cobrancas(); toast(descPct>0?'Registrado com '+descPct+'% de desconto.':'Registrado.');
 }
 function delSvc(id,sid){ const c=store.clients.find(x=>x.id===id); c.servicos=c.servicos.filter(s=>s.id!==sid); persist('clients'); openClient(id); RENDER.clients(); if(current==='cobrancas')RENDER.cobrancas(); }
-function setSvcStatus(id,sid,novo){ const c=store.clients.find(x=>x.id===id); const s=c.servicos.find(x=>x.id===sid); s.status=novo; persist('clients'); openClient(id); RENDER.clients(); toast(novo==='Pago'?'Marcado como pago.':'Reaberto.'); }
-function setParcela(id,sid,pid,novo){ const c=store.clients.find(x=>x.id===id); const s=c.servicos.find(x=>x.id===sid); const p=s.parcelas.find(x=>x.id===pid); p.status=novo; persist('clients'); openClient(id); RENDER.clients(); if(current==='cobrancas')RENDER.cobrancas(); }
+function setSvcStatus(id,sid,novo){ const c=store.clients.find(x=>x.id===id); const s=c.servicos.find(x=>x.id===sid); s.status=novo; if(novo==='Pago'){ s.pagoEm=todayStr(); } else { delete s.pagoEm; } persist('clients'); openClient(id); RENDER.clients(); toast(novo==='Pago'?'Marcado como pago.':'Reaberto.'); }
+function setParcela(id,sid,pid,novo){ const c=store.clients.find(x=>x.id===id); const s=c.servicos.find(x=>x.id===sid); const p=s.parcelas.find(x=>x.id===pid); p.status=novo; if(novo==='Pago'){ p.pagoEm=todayStr(); } else { delete p.pagoEm; } persist('clients'); openClient(id); RENDER.clients(); if(current==='cobrancas')RENDER.cobrancas(); }
 
 /* ============ COBRANÇAS ============ */
 // reúne todo pagamento em aberto: parcelas + serviços simples pendentes
@@ -1629,8 +1633,8 @@ RENDER.cobrancas = () => {
 function addDays(dateStr, n){ const d=new Date(dateStr+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
 function pagarCobranca(cid, sid, pid){
   const c=store.clients.find(x=>x.id===cid); const s=c.servicos.find(x=>x.id===sid);
-  if(pid){ const p=s.parcelas.find(x=>x.id===pid); p.status='Pago'; }
-  else { s.status='Pago'; }
+  if(pid){ const p=s.parcelas.find(x=>x.id===pid); p.status='Pago'; p.pagoEm=todayStr(); }
+  else { s.status='Pago'; s.pagoEm=todayStr(); }
   persist('clients'); RENDER.cobrancas(); RENDER.clients(); toast('Pagamento registrado.');
 }
 // só dígitos do telefone, com DDI 55 se faltar
@@ -2573,11 +2577,11 @@ function relDados(ini, fim){
   const servicos=[];
   store.clients.forEach(c=>(c.servicos||[]).forEach(s=>{ if(inRange(s.data)) servicos.push({cliente:c.nome, ...s}); }));
   const totalServicos=servicos.reduce((s,x)=>s+svcValorTotal(x),0);
-  // Recebimentos (parcelas + avulsos marcados pagos) no período — usa venc da parcela como data de recebimento aproximada
+  // Recebimentos (parcelas + avulsos marcados pagos) no período — usa a data do pagamento (pagoEm), com fallback
   let recebido=0; const recebimentos=[];
   store.clients.forEach(c=>(c.servicos||[]).forEach(s=>{
-    if(s.parcelas&&s.parcelas.length){ s.parcelas.forEach(p=>{ if(p.status==='Pago'&&inRange(p.venc)){ recebido+=Number(p.valor)||0; recebimentos.push({cliente:c.nome,desc:s.desc,valor:Number(p.valor)||0,data:p.venc}); } }); }
-    else if(s.status==='Pago'&&inRange(s.data)){ recebido+=svcValorTotal(s); recebimentos.push({cliente:c.nome,desc:s.desc,valor:svcValorTotal(s),data:s.data}); }
+    if(s.parcelas&&s.parcelas.length){ s.parcelas.forEach(p=>{ if(p.status==='Pago'&&inRange(dataRecebParcela(p))){ recebido+=Number(p.valor)||0; recebimentos.push({cliente:c.nome,desc:s.desc,valor:Number(p.valor)||0,data:dataRecebParcela(p)}); } }); }
+    else if(s.status==='Pago'&&inRange(dataRecebServico(s))){ recebido+=svcValorTotal(s); recebimentos.push({cliente:c.nome,desc:s.desc,valor:svcValorTotal(s),data:dataRecebServico(s)}); }
   }));
   // A receber que vence no período
   const aReceber=coletarCobrancas().filter(x=>inRange(x.venc));
