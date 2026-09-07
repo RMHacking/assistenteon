@@ -4476,6 +4476,17 @@ RENDER.negocio = () => {
       <p class="text-sm mb-1">Você está conectado como <b>${esc(sessao?.nome||'—')}</b> <span class="text-xs text-muted">(${esc(sessao?.email||sessao?.user||'')})</span>.</p>
       <p class="text-xs text-muted mb-3">Encerrar a sessão exige login novamente para reabrir o sistema neste dispositivo.</p>
       <button onclick="sairApp()" class="px-4 py-2 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 text-sm font-medium hover:bg-red-500/25">⎋ Sair</button>
+      ${(!sessao?.local)? `<div class="mt-4 pt-4 border-t border-edge">
+        <div class="text-sm font-medium mb-1">Alterar minha senha</div>
+        <p class="text-xs text-muted mb-3">Troque a senha de acesso ao sistema. Você precisa saber a senha atual. Depois de trocar, use a nova senha nos próximos logins.</p>
+        <div class="grid sm:grid-cols-3 gap-2 max-w-2xl">
+          <input id="pw_atual" type="password" placeholder="Senha atual" class="bg-ink border border-edge rounded-lg px-3 py-2 text-sm">
+          <input id="pw_nova" type="password" placeholder="Nova senha (mín. 6)" class="bg-ink border border-edge rounded-lg px-3 py-2 text-sm">
+          <input id="pw_nova2" type="password" placeholder="Repita a nova senha" onkeydown="if(event.key==='Enter')alterarSenhaLogin()" class="bg-ink border border-edge rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div id="pw_msg" class="hidden text-xs mt-2"></div>
+        <button onclick="alterarSenhaLogin()" class="mt-3 px-4 py-2 rounded-lg bg-accent text-ink font-medium text-sm hover:bg-accent2">Alterar senha</button>
+      </div>`:''}
       ${ehAdmin()? `<div class="mt-4 pt-3 border-t border-edge">
         <div class="text-xs text-muted">Novos acessos de clientes são criados automaticamente na compra (Hotmart) ou manualmente no painel de <b>Administração</b>.</div>
       </div>`:''}
@@ -4976,6 +4987,42 @@ async function esqueciSenha(){
     else if(e.code==='auth/user-not-found') msg='Não há conta com esse e-mail.';
     erro.textContent=msg;
     erro.classList.remove('hidden');
+  }
+}
+
+// Cliente logado troca a própria senha de login (com reautenticação = segurança).
+async function alterarSenhaLogin(){
+  const msg=document.getElementById('pw_msg');
+  const mostra=(txt,cor)=>{ msg.textContent=txt; msg.className='text-xs mt-2 '+(cor==='ok'?'text-green-400':'text-red-400'); msg.classList.remove('hidden'); };
+  const atual=(document.getElementById('pw_atual').value||'');
+  const nova=(document.getElementById('pw_nova').value||'');
+  const nova2=(document.getElementById('pw_nova2').value||'');
+  if(!atual || !nova || !nova2){ mostra('Preencha a senha atual e a nova senha (duas vezes).'); return; }
+  if(nova.length<6){ mostra('A nova senha precisa ter pelo menos 6 caracteres.'); return; }
+  if(nova!==nova2){ mostra('A confirmação não confere com a nova senha.'); return; }
+  if(nova===atual){ mostra('A nova senha precisa ser diferente da atual.'); return; }
+  if(!window.FB || !window.FB.auth){ mostra('Sem conexão no momento. Tente novamente em instantes.'); return; }
+  const user=window.FB.auth.currentUser;
+  if(!user || !user.email){ mostra('Não foi possível identificar sua conta. Saia e entre novamente.'); return; }
+  mostra('Alterando...', 'ok');
+  try{
+    // 1) reautentica com a senha atual (exigência de segurança do Firebase)
+    const cred=firebase.auth.EmailAuthProvider.credential(user.email, atual);
+    await user.reauthenticateWithCredential(cred);
+    // 2) define a nova senha
+    await user.updatePassword(nova);
+    document.getElementById('pw_atual').value='';
+    document.getElementById('pw_nova').value='';
+    document.getElementById('pw_nova2').value='';
+    mostra('Senha alterada com sucesso! Use a nova senha nos próximos acessos.', 'ok');
+    toast('Senha alterada.');
+  }catch(e){
+    let m='Não foi possível alterar a senha.';
+    if(e.code==='auth/wrong-password' || e.code==='auth/invalid-credential') m='A senha atual está incorreta.';
+    else if(e.code==='auth/weak-password') m='A nova senha é muito fraca (use 6+ caracteres).';
+    else if(e.code==='auth/requires-recent-login') m='Por segurança, saia e entre novamente antes de trocar a senha.';
+    else if(e.code==='auth/too-many-requests') m='Muitas tentativas. Aguarde alguns minutos e tente de novo.';
+    mostra(m);
   }
 }
 
